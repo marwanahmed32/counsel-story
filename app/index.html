@@ -995,13 +995,22 @@ async function initApp() {
   document.getElementById('hdr-name').textContent = 'Counsel Story';
   initSubscription();
   initSubscriberDb();
-  await syncSubscriberRecord();
-  if (isAppLocked()) { showPaywallScreen(); return; }
-  applyRolePermissions();
-  scheduleReminders();
-  render();
-  checkNotifDot();
-  syncCasesToSheet(); // يحدّث جدول القضايا في الشيت لو كانت موجودة قبل كده (مثلاً بعد إعادة تسجيل)
+  try {
+    await syncSubscriberRecord();
+  } catch (e) {
+    console.warn('syncSubscriberRecord failed, continuing anyway:', e);
+  }
+  try {
+    if (isAppLocked()) { showPaywallScreen(); return; }
+    applyRolePermissions();
+    scheduleReminders();
+    render(true);
+    checkNotifDot();
+    syncCasesToSheet(); // يحدّث جدول القضايا في الشيت لو كانت موجودة قبل كده (مثلاً بعد إعادة تسجيل)
+  } catch (e) {
+    console.error('initApp render step failed:', e);
+    render(true); // آخر محاولة عشان الصفحة الرئيسية متفضلش فاضية
+  }
 }
 
 // ─── شاشة قفل التطبيق بعد انتهاء التجربة/الاشتراك ─────────
