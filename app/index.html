@@ -555,7 +555,13 @@ async function syncSubscriberRecord() {
     const added = data.extraAi - (store.subscription.extraAiGranted||0);
     store.subscription.extraAiGranted = data.extraAi;
     save();
-    if (added > 0) notices.push(`⚡ تم إضافة ${added} استخدام إضافي لرصيدك.`);
+    if (added > 0) notices.push(`⚡ تم إضافة ${added} بوست/مقال إضافي لرصيدك.`);
+  }
+  if (typeof data.extraLegal === 'number' && data.extraLegal !== store.subscription.extraLegalGranted) {
+    const added = data.extraLegal - (store.subscription.extraLegalGranted||0);
+    store.subscription.extraLegalGranted = data.extraLegal;
+    save();
+    if (added > 0) notices.push(`⚡ تم إضافة ${added} سؤال قانوني إضافي لرصيدك.`);
   }
 
   if (notices.length) alert(notices.join('\n'));
@@ -684,7 +690,8 @@ function initSubscription() {
       weekStart: getWeekStart(),
       aiUsedThisWeek: 0,
       legalUsedThisWeek: 0,
-      extraAiGranted: 0, extraAiUsed: 0       // خدمات إضافية عامة (بوست/مقال/تحليل) خارج حدود الباقة
+      extraAiGranted: 0, extraAiUsed: 0,      // رصيد إضافي للبوستات والمقالات خارج حدود الباقة
+      extraLegalGranted: 0, extraLegalUsed: 0 // رصيد إضافي لأسئلة الباحث القانوني خارج حدود الباقة
     };
     save();
   }
@@ -707,6 +714,8 @@ function resetWeeklyQuotaIfNeeded() {
   const sub = store.subscription;
   if (sub.extraAiGranted === undefined) sub.extraAiGranted = 0;
   if (sub.extraAiUsed === undefined) sub.extraAiUsed = 0;
+  if (sub.extraLegalGranted === undefined) sub.extraLegalGranted = 0;
+  if (sub.extraLegalUsed === undefined) sub.extraLegalUsed = 0;
   if (sub.aiUsedThisWeek === undefined) sub.aiUsedThisWeek = 0;
   if (sub.legalUsedThisWeek === undefined) sub.legalUsedThisWeek = 0;
   if (!sub.plan) sub.plan = 'trial';
@@ -727,15 +736,65 @@ function trialDaysLeft() {
   return Math.max(0, TRIAL_DAYS - daysPassed);
 }
 
-// 🚧 كل المميزات مفتوحة حاليًا بدون حدود (Beta Phase)
-function isAppLocked() { return false; }
+function isAppLocked() {
+  if (isAdminAccount()) return false;
+  const sub = store.subscription;
+  if (!sub) return false;
+  if (sub.plan === 'trial') {
+    return trialDaysLeft() <= 0;
+  }
+  // باقة مدفوعة: تقفل لو معدّاها تاريخ نهاية الاشتراك (paidUntil)
+  if (sub.paidUntil) {
+    return new Date(sub.paidUntil) < new Date();
+  }
+  // باقة مدفوعة من غير تاريخ نهاية مسجّل (لسه ما اتحدّثش من الشيت) — نسيبها مفتوحة لحد ما يوصل تاريخ
+  return false;
+}
 
 // يتحقق من إمكانية استخدام ميزة ذكاء اصطناعي (بوست/تحليل/مقال) وينقص من الرصيد لو مسموح
-function checkAndConsumeAIQuota() { return true; }
+function checkAndConsumeAIQuota() {
+  if (isAdminAccount()) return true;
+  resetWeeklyQuotaIfNeeded();
+  const sub = store.subscription;
+  const plan = PLANS[sub.plan] || PLANS['trial'];
+  if ((sub.aiUsedThisWeek||0) < plan.aiQuota) {
+    sub.aiUsedThisWeek = (sub.aiUsedThisWeek||0) + 1;
+    save();
+    return true;
+  }
+  if ((sub.extraAiGranted||0) - (sub.extraAiUsed||0) > 0) {
+    sub.extraAiUsed = (sub.extraAiUsed||0) + 1;
+    save();
+    return true;
+  }
+  alert('خلصت رصيد الاستخدام الأسبوعي لباقتك. تقدر تشتري رصيد إضافي، تستنى تجديد الرصيد يوم الأحد الجاي، أو ترقّي باقتك.');
+  showPlansPage();
+  return false;
+}
 
 function checkAndConsumeLegalQuota() {
-  // 🚧 الحدود متوقفة مؤقتًا — كل المستخدمين بيستخدموا بدون حدود
-  return true;
+  if (isAdminAccount()) return true;
+  resetWeeklyQuotaIfNeeded();
+  const sub = store.subscription;
+  const plan = PLANS[sub.plan] || PLANS['trial'];
+  if (!plan.legalAssistant) {
+    alert('الباحث القانوني الذكي متاح من باقة استئناف فما فوق.');
+    showPlansPage();
+    return false;
+  }
+  if ((sub.legalUsedThisWeek||0) < plan.legalQuota) {
+    sub.legalUsedThisWeek = (sub.legalUsedThisWeek||0) + 1;
+    save();
+    return true;
+  }
+  if ((sub.extraLegalGranted||0) - (sub.extraLegalUsed||0) > 0) {
+    sub.extraLegalUsed = (sub.extraLegalUsed||0) + 1;
+    save();
+    return true;
+  }
+  alert('خلصت رصيد الباحث القانوني الأسبوعي. هيتجدد يوم الأحد الجاي، أو رقّي باقتك.');
+  showPlansPage();
+  return false;
 }
 
 function remainingAIQuota() {
@@ -759,6 +818,13 @@ function remainingExtraAI() {
   resetWeeklyQuotaIfNeeded();
   const sub = store.subscription;
   return Math.max(0, (sub.extraAiGranted||0) - (sub.extraAiUsed||0));
+}
+
+function remainingExtraLegal() {
+  if (!store.subscription) return 0;
+  resetWeeklyQuotaIfNeeded();
+  const sub = store.subscription;
+  return Math.max(0, (sub.extraLegalGranted||0) - (sub.extraLegalUsed||0));
 }
 
 function setPlan(planKey) {
@@ -1298,48 +1364,6 @@ function buildPlanCardsHTML(showCurrentBadge) {
   }).join('');
 }
 
-// ─── باقة المطور — خدمة مستقلة (مش جزء من نظام الرصيد الأسبوعي) ──
-const DEVELOPER_PLAN = {
-  label: '🖥️ Counsel Story — الموقع المخصص',
-  price: 2500,
-  period: 'شهريًا',
-  description: 'موقع شخصي احترافي مصمم من الصفر بهوية بصرية خاصة بمكتبك — مش قالب جاهز. صفحات متعددة، محتوى موسّع، وحضور رقمي بمستوى أكبر مكاتب المحاماة.',
-  features: [
-    'تصميم مخصص بالكامل: لوجو، ألوان، خطوط — هوية بصرية تعبّر عنك',
-    'صفحات متعددة: الرئيسية، من نحن، التخصصات، الإنجازات، المقالات، التواصل',
-    'مساحة بيانات موسّعة: مسار مهني، نماذج قضايا ناجحة، شهادات موكلين',
-    'تحسين SEO — اسمك يظهر أول ما حد يدور على محامي في تخصصك',
-    'تحديثات وتعديلات دورية حسب طلبك طول فترة الاشتراك',
-    'دعم فني مباشر شهري لمتابعة الموقع وتطويره'
-  ]
-};
-
-function buildDeveloperPlanCardHTML() {
-  const check = `<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
-  const featuresHTML = DEVELOPER_PLAN.features.map(f => `<div class="plan-feature">${check}<div>${f}</div></div>`).join('');
-  return `<div class="plan-card" style="border:1px solid var(--gold-br);background:linear-gradient(160deg, var(--bg3), var(--gold-bg))">
-    <div class="plan-badge" style="background:var(--gold);color:#000">خدمة مستقلة</div>
-    <div class="plan-name">${DEVELOPER_PLAN.label}</div>
-    <div style="font-size:12px;color:var(--tm);margin-bottom:8px">لمكتبك حضور رقمي في مستوى تاني تمامًا</div>
-    <div style="font-size:11px;color:var(--tm);text-decoration:line-through;opacity:.75">تكلفة تصميم موقع مماثل: 15,000+ جنيه لمرة واحدة</div>
-    <div class="plan-price">${DEVELOPER_PLAN.price.toLocaleString()} <span>جنيه</span></div>
-    <div style="font-size:12px;color:var(--tm);margin-bottom:10px">${DEVELOPER_PLAN.period} — شامل التحديثات والدعم المستمر</div>
-    <div style="font-size:12px;color:var(--tm);margin-bottom:10px;line-height:1.7">${DEVELOPER_PLAN.description}</div>
-    ${featuresHTML}
-    <button class="plan-btn" style="background:var(--gold);color:#000" onclick="requestDeveloperPlanViaWhatsApp()">📲 اطلب باقة المطور عبر واتساب</button>
-  </div>`;
-}
-
-function requestDeveloperPlanViaWhatsApp() {
-  if (!ADMIN_WHATSAPP) {
-    alert('لسه رقم التواصل مش متظبط في التطبيق. تواصل مع الدعم مباشرة.');
-    return;
-  }
-  const name = store.profile?.name || '';
-  const msg = `السلام عليكم، أنا ${name}، عايز أطلب "باقة المطور" (موقع شخصي احترافي موسّع) بسعر ${DEVELOPER_PLAN.price} جنيه/شهريًا في تطبيق Counsel Story.\nمعايا رقم هاتفي: ${store.profile?.phone||''}`;
-  window.open(waLink(ADMIN_WHATSAPP, msg), '_blank');
-}
-
 // ─── تعليمات الدفع اليدوي (Instapay/فودافون كاش) ──────────
 function buildPaymentInstructionsHTML() {
   if (!ADMIN_PAYMENT_INFO && !ADMIN_WHATSAPP) return '';
@@ -1364,25 +1388,23 @@ function requestPlanViaWhatsApp(planKey) {
   window.open(waLink(ADMIN_WHATSAPP, msg), '_blank');
 }
 
-// ─── خدمات إضافية (Add-ons) خارج حدود الباقة ───────────────
+// ─── خدمة إضافية واحدة خارج حدود الباقة ─────────────────────
 const EXTRA_SERVICES = {
-  ai1:    { pool:'ai',    label:'استخدام واحد إضافي (بوست / مقال / تحليل)', qty:1, price:30 },
-  ai5:    { pool:'ai',    label:'باقة 5 استخدامات إضافية (بوست / مقال / تحليل)', qty:5, price:110, note:'وفّر 40 جنيه' },
-  ai10:   { pool:'ai',    label:'باقة 10 استخدامات إضافية (بوست / مقال / تحليل)', qty:10, price:200, note:'وفّر 100 جنيه' },
-  ai20:   { pool:'ai',    label:'باقة 20 استخدام إضافي — للمكاتب عالية النشاط', qty:20, price:360, note:'وفّر 240 جنيه' },
+  bundle10: { label: '10 استخدامات إضافية — 10 بوست + 10 مقال + 10 سؤال قانوني', price: 120, limitedOffer: true },
 };
 
 function buildExtraServicesHTML() {
   const rows = Object.entries(EXTRA_SERVICES).map(([key, s]) => `
     <div class="sbox" style="align-items:center">
       <div>
+        ${s.limitedOffer ? `<div style="display:inline-block;background:var(--gold-bg);border:1px solid var(--gold-br);color:var(--gold);font-size:10px;font-weight:800;padding:2px 8px;border-radius:6px;margin-bottom:4px">⏳ عرض لفترة محدودة</div>` : ''}
         <div class="sbt">${s.label}</div>
-        <div class="sbs">${s.price} جنيه${s.note ? ' — ' + s.note : ''}</div>
+        <div class="sbs">${s.price} جنيه</div>
       </div>
       <button class="plan-btn" style="width:auto;padding:9px 16px;background:var(--gold);color:#000" onclick="requestExtraServiceViaWhatsApp('${key}')">📲 اطلب الآن</button>
     </div>`).join('');
   return `<div style="margin-top:18px">
-    <div style="font-size:15px;font-weight:800;color:var(--gold);margin-bottom:8px">⚡ خدمات إضافية خارج الباقة</div>
+    <div style="font-size:15px;font-weight:800;color:var(--gold);margin-bottom:8px">⚡ خدمة إضافية خارج الباقة</div>
     <div style="font-size:12px;color:var(--tm);margin-bottom:10px;line-height:1.6">خلصت رصيد الباقة قبل الأسبوع الجاي؟ اشتري رصيد إضافي فورًا بدون تغيير باقتك.</div>
     ${rows}
   </div>`;
@@ -1429,7 +1451,6 @@ function showPlansPage() {
     ${buildPaymentInstructionsHTML()}
     ${buildPlanCardsHTML(true)}
     <div style="font-size:11px;color:var(--td);text-align:center;margin-top:6px;line-height:1.6">الرصيد الأسبوعي بيتجدد كل أحد.</div>
-    ${buildDeveloperPlanCardHTML()}
     ${buildExtraServicesHTML()}
     <div class="br"><button class="bcan" style="width:100%" onclick="closeModal()">إغلاق</button></div>`);
 }
@@ -1450,6 +1471,10 @@ async function refreshPlanFromSheet() {
 
 function showMarketingHub() {
   mset(`<div class="mh"></div><h2>📢 تسويق المكتب</h2>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button id="mk-tab-post" class="qa-btn" style="flex:1" onclick="renderPostTab()">📝 بوست سوشيال ميديا</button>
+      <button id="mk-tab-article" class="qa-btn" style="flex:1" onclick="renderArticleTab()">📄 مقال قانوني</button>
+    </div>
     <div id="marketing-body"></div>`);
   renderPostTab();
 }
@@ -1536,9 +1561,76 @@ async function generateSocialPost() {
   btn.disabled = false;
 }
 
+// ─── مقال قانوني مستقل (منفصل عن بناء الموقع الكامل) — متاح من باقة استئناف فما فوق ─
+function renderArticleTab() {
+  const body = document.getElementById('marketing-body');
+  const allowed = isAdminAccount() || store.subscription?.plan === 'pro' || store.subscription?.plan === 'elite';
+  if (!allowed) {
+    body.innerHTML = `<div class="card" style="text-align:center;padding:26px 16px">
+      <div style="font-size:32px;margin-bottom:10px">📄</div>
+      <div style="font-weight:800;margin-bottom:8px">مقالات قانونية بالذكاء الاصطناعي</div>
+      <div style="font-size:13px;color:var(--tm);margin-bottom:16px;line-height:1.7">الميزة دي متاحة من باقة استئناف فما فوق — مقال قانوني احترافي جاهز في ثواني تقدر تنشره في أي مكان.</div>
+      <button class="bsave" style="width:100%" onclick="showPlansPage()">💎 شوف الباقات</button>
+    </div>`;
+    return;
+  }
+  const types = {};
+  store.cases.forEach(c=>{ types[c.type]=true; });
+  const specialties = Object.keys(types);
+  body.innerHTML = `
+    <div class="fg"><label>التخصص / موضوع المقال</label>
+      <select id="art-topic">${specialties.length ? specialties.map(t=>`<option>${t}</option>`).join('') : '<option>قانون عام</option>'}<option value="__custom">موضوع آخر (اكتبه بنفسك)</option></select>
+    </div>
+    <div class="fg" id="art-custom-wrap" style="display:none"><label>اكتب الموضوع</label><input id="art-custom-topic" placeholder="مثال: حقوق العامل عند الفصل التعسفي"/></div>
+    <button class="bsave" style="width:100%" onclick="generateStandaloneArticle()" id="art-btn">✨ توليد مقال بالذكاء الاصطناعي</button>
+    <div id="art-result" style="margin-top:14px"></div>
+  `;
+  document.getElementById('art-topic').addEventListener('change', function(){
+    document.getElementById('art-custom-wrap').style.display = this.value==='__custom' ? 'block' : 'none';
+  });
+}
+
+async function generateStandaloneArticle() {
+  if (!checkAndConsumeAIQuota()) return;
+  const topicSel = document.getElementById('art-topic').value;
+  const topic = topicSel === '__custom' ? (document.getElementById('art-custom-topic').value.trim() || 'قانون عام') : topicSel;
+  const btn = document.getElementById('art-btn');
+  const resultEl = document.getElementById('art-result');
+  btn.disabled = true;
+  resultEl.innerHTML = '<div class="ai-loading">⏳ جاري كتابة المقال...</div>';
+
+  const prompt = `أنت محامٍ خبير وكاتب محتوى قانوني محترف. اكتب مقالاً تعريفياً كاملاً وجذاباً عن "${topic}" في إطار القانون المصري.
+
+المطلوب:
+- عنوان جذاب واحترافي للمقال
+- محتوى المقال (250-350 كلمة) يشرح للقارئ العادي: إيه أهم النقاط القانونية في هذا المجال، إيه الأخطاء الشائعة اللي الناس بتقع فيها، ومتى يحتاجوا يستشيروا محامي
+- الأسلوب: عربي فصيح بسيط، مباشر، يبني ثقة القارئ في خبرة المحامي بدون مبالغة
+
+رجّع الرد بصيغة JSON فقط بدون أي نص إضافي، بالشكل ده بالظبط:
+{"title": "العنوان هنا", "content": "المحتوى هنا"}`;
+
+  try {
+    let text = await callAI(prompt, 1200);
+    text = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(text);
+    if (parsed.title && parsed.content) {
+      resultEl.innerHTML = `
+        <div class="card" style="padding:14px">
+          <div style="font-weight:800;font-size:15px;margin-bottom:8px;color:var(--gold)">${parsed.title.replace(/</g,'&lt;')}</div>
+          <div style="white-space:pre-wrap;font-size:13px;line-height:1.9" id="art-text">${parsed.content.replace(/</g,'&lt;')}</div>
+        </div>
+        <button class="bcan" style="width:100%;margin-top:9px" onclick="copyMarketingText('art-text')">📋 نسخ المقال</button>`;
+    } else {
+      resultEl.innerHTML = `<div style="color:var(--err);font-size:13px">⚠️ تعذر توليد المقال، حاول مرة أخرى</div>`;
+    }
+  } catch(e) {
+    resultEl.innerHTML = `<div style="color:var(--err);font-size:13px">⚠️ ${e.message || 'تعذر توليد المقال، حاول مرة أخرى'}</div>`;
+  }
+  btn.disabled = false;
+}
+
 // ─── صورة قانونية تصميمية جاهزة للمنشور (تصميم كامل v2) ────
 function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
-  const words = text.split(' ');
   let line = '';
   const lines = [];
   words.forEach(word => {
@@ -3352,6 +3444,11 @@ function saveSiteData(d) { safeSet('qd_site', JSON.stringify(d)); }
 let siteDraft = null;
 
 function showWebsiteBuilder() {
+  if (!isAdminAccount() && store.subscription?.plan !== 'elite') {
+    alert('الموقع الشخصي الكامل متاح لباقة نقض بس. رقّي باقتك عشان تقدر تبنيه.');
+    showPlansPage();
+    return;
+  }
   siteDraft = loadSiteData();
   renderWebsiteBuilderModal();
 }
@@ -4294,6 +4391,20 @@ try {
   if (storageBlocked) {
     console.warn('localStorage غير متاح — يتم استخدام تخزين مؤقت في الذاكرة فقط لهذه الجلسة.');
   }
+  // نتأكد من حالة الاشتراك تاني كل ما المستخدم يرجع للتطبيق (يفتح التاب تاني، يفتح الموبايل من الخلفية، إلخ)
+  // عشان لو اتشال من الشيت أو اتغيرت باقته، الأثر يظهر فورًا من غير ما يستنى يدوس "تحديث" بنفسه
+  let _lastFocusSync = 0;
+  function _maybeResyncOnFocus() {
+    if (!store.profile) return; // لسه ما سجّلش، مفيش داعي
+    const now = Date.now();
+    if (now - _lastFocusSync < 15000) return; // تجنّب التكرار الزيادة
+    _lastFocusSync = now;
+    syncSubscriberRecord();
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') _maybeResyncOnFocus();
+  });
+  window.addEventListener('focus', _maybeResyncOnFocus);
 } catch (e) {
   document.body.innerHTML = `<div style="padding:40px 24px;text-align:center;font-family:Tahoma,Arial,sans-serif;background:#0a0a0a;color:#f0f0f0;min-height:100vh;direction:rtl">
     <div style="font-size:40px;margin-bottom:14px">⚠️</div>
