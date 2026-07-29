@@ -1561,15 +1561,16 @@ async function generateSocialPost() {
   btn.disabled = false;
 }
 
-// ─── مقال قانوني مستقل (منفصل عن بناء الموقع الكامل) — متاح من باقة استئناف فما فوق ─
+// ─── مقال قانوني مستقل (منفصل عن بناء الموقع الكامل) — متاح للتجربة المجانية وباقة استئناف فما فوق ─
 function renderArticleTab() {
   const body = document.getElementById('marketing-body');
-  const allowed = isAdminAccount() || store.subscription?.plan === 'pro' || store.subscription?.plan === 'elite';
+  const p = store.subscription?.plan;
+  const allowed = isAdminAccount() || p === 'trial' || p === 'pro' || p === 'elite';
   if (!allowed) {
     body.innerHTML = `<div class="card" style="text-align:center;padding:26px 16px">
       <div style="font-size:32px;margin-bottom:10px">📄</div>
       <div style="font-weight:800;margin-bottom:8px">مقالات قانونية بالذكاء الاصطناعي</div>
-      <div style="font-size:13px;color:var(--tm);margin-bottom:16px;line-height:1.7">الميزة دي متاحة من باقة استئناف فما فوق — مقال قانوني احترافي جاهز في ثواني تقدر تنشره في أي مكان.</div>
+      <div style="font-size:13px;color:var(--tm);margin-bottom:16px;line-height:1.7">الميزة دي متاحة في التجربة المجانية وباقة استئناف فما فوق — مقال قانوني احترافي جاهز في ثواني تقدر تنشره في أي مكان.</div>
       <button class="bsave" style="width:100%" onclick="showPlansPage()">💎 شوف الباقات</button>
     </div>`;
     return;
