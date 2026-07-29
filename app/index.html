@@ -1061,21 +1061,31 @@ async function initApp() {
   document.getElementById('hdr-name').textContent = 'Counsel Story';
   initSubscription();
   initSubscriberDb();
+
+  // نعرض الصفحة الرئيسية فورًا من البيانات المحفوظة محليًا — من غير ما ننتظر
+  // مزامنة الشيت (اللي ممكن تاخد لحد 15 ثانية لو الاتصال بطيء أو الـ Apps Script بارد)
   try {
-    await syncSubscriberRecord();
-  } catch (e) {
-    console.warn('syncSubscriberRecord failed, continuing anyway:', e);
-  }
-  try {
-    if (isAppLocked()) { showPaywallScreen(); return; }
-    applyRolePermissions();
-    scheduleReminders();
-    render(true);
-    checkNotifDot();
-    syncCasesToSheet(); // يحدّث جدول القضايا في الشيت لو كانت موجودة قبل كده (مثلاً بعد إعادة تسجيل)
+    if (isAppLocked()) { showPaywallScreen(); }
+    else {
+      applyRolePermissions();
+      scheduleReminders();
+      render(true);
+      checkNotifDot();
+      syncCasesToSheet();
+    }
   } catch (e) {
     console.error('initApp render step failed:', e);
     render(true); // آخر محاولة عشان الصفحة الرئيسية متفضلش فاضية
+  }
+
+  // مزامنة حالة الاشتراك في الخلفية من غير ما نعطّل ظهور الصفحة
+  try {
+    await syncSubscriberRecord();
+    // لو الباقة أو القفل اتغيّر بعد المزامنة، نحدّث الشاشة
+    if (isAppLocked()) { showPaywallScreen(); }
+    else { applyRolePermissions(); render(true); }
+  } catch (e) {
+    console.warn('syncSubscriberRecord failed, continuing anyway:', e);
   }
 }
 
