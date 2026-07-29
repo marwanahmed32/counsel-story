@@ -1075,7 +1075,18 @@ async function initApp() {
     }
   } catch (e) {
     console.error('initApp render step failed:', e);
-    render(true); // آخر محاولة عشان الصفحة الرئيسية متفضلش فاضية
+    try {
+      render(true);
+    } catch (e2) {
+      console.error('render() also failed:', e2);
+      const c = document.getElementById('content');
+      if (c) c.innerHTML = `<div style="padding:40px 20px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">⚠️</div>
+        <div style="font-weight:800;margin-bottom:8px">حصلت مشكلة في تحميل الصفحة</div>
+        <div style="font-size:12px;color:var(--tm);margin-bottom:16px;direction:ltr;text-align:left;background:rgba(0,0,0,.2);padding:10px;border-radius:8px;font-family:monospace">${(e2 && e2.message) || e2}</div>
+        <button class="bsave" style="width:100%" onclick="location.reload()">🔄 إعادة تحميل الصفحة</button>
+      </div>`;
+    }
   }
 
   // مزامنة حالة الاشتراك في الخلفية من غير ما نعطّل ظهور الصفحة
@@ -4402,6 +4413,20 @@ try {
   if (storageBlocked) {
     console.warn('localStorage غير متاح — يتم استخدام تخزين مؤقت في الذاكرة فقط لهذه الجلسة.');
   }
+  // شبكة أمان: لو بعد 4 ثواني من فتح الصفحة (والمستخدم مسجّل بالفعل) الشاشة لسه فاضية
+  // تمامًا من غير أي سبب واضح، نديله فرصة يعيد المحاولة بدل ما تفضل فاضية للأبد
+  setTimeout(() => {
+    const c = document.getElementById('content');
+    const onboardVisible = document.getElementById('onboard');
+    if (store.profile && c && !onboardVisible && c.innerHTML.trim() === '') {
+      c.innerHTML = `<div style="padding:40px 20px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">⏳</div>
+        <div style="font-weight:800;margin-bottom:8px">الصفحة محتاجة إعادة تحميل</div>
+        <div style="font-size:12px;color:var(--tm);margin-bottom:16px">حصل تأخير غير متوقع في تحميل بياناتك.</div>
+        <button class="bsave" style="width:100%" onclick="location.reload()">🔄 إعادة تحميل الصفحة</button>
+      </div>`;
+    }
+  }, 4000);
   // نتأكد من حالة الاشتراك تاني كل ما المستخدم يرجع للتطبيق (يفتح التاب تاني، يفتح الموبايل من الخلفية، إلخ)
   // عشان لو اتشال من الشيت أو اتغيرت باقته، الأثر يظهر فورًا من غير ما يستنى يدوس "تحديث" بنفسه
   let _lastFocusSync = 0;
