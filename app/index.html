@@ -1224,8 +1224,9 @@ async function callAI(promptText, maxTokens = 800) {
   });
   return Promise.race([req, timeout]);
 }
-// ─── المساعد القانوني الذكي (Chat) ────────────────────────
+// ─── المساعد القانوني الذكي (Chat) — مع محادثات محفوظة لكل قضية، رفع مستندات، وفويس ─
 let aiChatHistory = []; // {role:'user'|'ai', text}
+let currentLegalCaseId = ''; // '' = محادثة عامة بدون قضية محددة
 const AI_QUICK_PROMPTS = [
   'لخّص هذه القضية في نقاط',
   'اقترح دفوع قانونية مناسبة',
@@ -1234,7 +1235,12 @@ const AI_QUICK_PROMPTS = [
   'ابحث في مبادئ نقض متعلقة بالموضوع'
 ];
 
-function showAIAssistant() {
+function legalChatsStore() {
+  if (!store.legalChats) store.legalChats = {};
+  return store.legalChats;
+}
+
+function showAIAssistant(caseId) {
   resetWeeklyQuotaIfNeeded();
   const hasAccess = isAdminAccount() || PLANS[store.subscription.plan].legalAssistant;
   if (!hasAccess) {
@@ -1243,20 +1249,114 @@ function showAIAssistant() {
     }
     return;
   }
-  aiChatHistory = [];
+  currentLegalCaseId = caseId || '';
+  const chats = legalChatsStore();
+  aiChatHistory = chats[currentLegalCaseId || 'general'] || [];
   const remaining = isAdminAccount() ? '∞' : remainingLegalQuota();
+  const caseOptions = `<option value="">💬 محادثة عامة (بدون قضية محددة)</option>` +
+    store.cases.map(c => `<option value="${c.id}" ${c.id===currentLegalCaseId?'selected':''}>${c.name.replace(/</g,'&lt;')}</option>`).join('');
+  const currentCase = store.cases.find(c=>c.id===currentLegalCaseId);
+  const attHTML = currentCase && currentCase.attachments && currentCase.attachments.length
+    ? `<div style="font-size:11px;color:var(--tm);margin-bottom:8px">📎 مستندات القضية المتاحة للمساعد: ${currentCase.attachments.map(a=>a.name).join('، ')}</div>` : '';
+
   mset(`<div class="mh"></div><h2>⚖️ المساعد القانوني الذكي</h2>
     <div style="font-size:11px;color:var(--gold);margin-bottom:10px">رصيدك المتبقي ${store.subscription.plan==='trial'?'خلال التجربة':'هذا الأسبوع'}: ${remaining} سؤال</div>
+    <div class="fg" style="margin-bottom:10px"><label>اربط المحادثة بقضية (اختياري)</label>
+      <select id="chat-case-select" onchange="switchLegalChatCase(this.value)">${caseOptions}</select>
+    </div>
+    ${attHTML}
     <div class="chat-wrap">
-      <div class="chat-msgs" id="chat-msgs">
-        <div class="chat-msg ai">أهلاً بحضرتك. اسألني أي سؤال قانوني: صياغة مذكرة أو إنذار، مواعيد استئناف وطعن، دفوع مناسبة، أو تلخيص موقف قانوني. اكتب اسم القضية في سؤالك لو حابب أربطها ببيانات مسجلة عندك.</div>
-      </div>
+      <div class="chat-msgs" id="chat-msgs"></div>
       <div class="chat-suggests">${AI_QUICK_PROMPTS.map(p=>`<button class="chip-btn" onclick="sendAIChat('${p.replace(/'/g,"\\'")}')">${p}</button>`).join('')}</div>
+      <input type="file" id="chat-file-input" accept="image/*,.pdf" style="display:none" onchange="attachDocToChat(this.files[0])"/>
       <div class="chat-input-row">
-        <textarea id="chat-input" rows="2" placeholder="اكتب سؤالك القانوني هنا..."></textarea>
+        <button class="chat-mic" id="chat-mic-btn" onclick="toggleVoiceInput()" title="تسجيل صوتي" style="background:var(--bg3);border:1px solid var(--br);border-radius:10px;padding:0 12px;cursor:pointer;color:var(--gold);font-size:16px">🎤</button>
+        <button class="chat-mic" onclick="document.getElementById('chat-file-input').click()" title="إرفاق مستند" style="background:var(--bg3);border:1px solid var(--br);border-radius:10px;padding:0 12px;cursor:pointer;color:var(--gold);font-size:16px">📎</button>
+        <textarea id="chat-input" rows="2" placeholder="اكتب سؤالك القانوني هنا أو استخدم 🎤..."></textarea>
         <button class="chat-send" onclick="sendAIChat()">إرسال</button>
       </div>
     </div>`);
+  renderChatMsgs();
+}
+
+function switchLegalChatCase(caseId) {
+  showAIAssistant(caseId);
+}
+
+// ─── إرفاق مستند من داخل الشات (لازم تكون القضية محددة عشان يترفع عليها) ──
+async function attachDocToChat(file) {
+  if (!file) return;
+  if (!currentLegalCaseId) {
+    alert('اختار قضية الأول من القايمة فوق عشان ترفق مستند عليها.');
+    return;
+  }
+  const c = store.cases.find(x=>x.id===currentLegalCaseId);
+  if (!c) return;
+  aiChatHistory.push({role:'ai', text:'⏳ جاري رفع المستند...', loading:true});
+  renderChatMsgs();
+  try {
+    const isPdf = file.type === 'application/pdf';
+    const dataUrl = isPdf ? await fileToDataUrl(file) : await compressImage(file, 1400, 0.8);
+    const result = await uploadAttachmentToDrive(c, file.name, dataUrl, isPdf?'application/pdf':'image/jpeg');
+    if (!c.attachments) c.attachments = [];
+    c.attachments.push({ name: file.name.split('.')[0], type: isPdf?'application/pdf':'image', url: result.url, thumbUrl: result.thumbUrl, addedAt: new Date().toLocaleDateString('ar-EG') });
+    save(); syncCasesToSheet();
+    aiChatHistory = aiChatHistory.filter(m=>!m.loading);
+    aiChatHistory.push({role:'ai', text:`✅ تم إرفاق المستند "${file.name}" بقضية "${c.name}". تقدر تسألني عنه دلوقتي (مثلاً: "لخّصلي المستند اللي رفعته").`});
+    saveLegalChat();
+  } catch(e) {
+    aiChatHistory = aiChatHistory.filter(m=>!m.loading);
+    aiChatHistory.push({role:'ai', text:'⚠️ تعذر رفع المستند. حاول مرة أخرى.'});
+  }
+  renderChatMsgs();
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function saveLegalChat() {
+  const chats = legalChatsStore();
+  chats[currentLegalCaseId || 'general'] = aiChatHistory;
+  save();
+}
+
+// ─── إدخال صوتي (Web Speech API) ────────────────────────────
+let _voiceRecognition = null;
+function toggleVoiceInput() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alert('المتصفح ده مش بيدعم الإدخال الصوتي. جربي من كروم على الموبايل أو الكمبيوتر.'); return; }
+  const btn = document.getElementById('chat-mic-btn');
+  if (_voiceRecognition) { _voiceRecognition.stop(); return; }
+  _voiceRecognition = new SR();
+  _voiceRecognition.lang = 'ar-EG';
+  _voiceRecognition.interimResults = false;
+  _voiceRecognition.onstart = () => { if (btn) { btn.textContent = '🔴'; btn.style.color = 'var(--err)'; } };
+  _voiceRecognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    const inputEl = document.getElementById('chat-input');
+    if (inputEl) inputEl.value = (inputEl.value ? inputEl.value + ' ' : '') + transcript;
+  };
+  _voiceRecognition.onerror = () => {};
+  _voiceRecognition.onend = () => {
+    if (btn) { btn.textContent = '🎤'; btn.style.color = 'var(--gold)'; }
+    _voiceRecognition = null;
+  };
+  _voiceRecognition.start();
+}
+
+// ─── قراءة رد المساعد بالصوت (Text-to-Speech) ───────────────
+function speakText(text) {
+  if (!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'ar-EG';
+  window.speechSynthesis.speak(utter);
 }
 
 async function sendAIChat(preset) {
@@ -1270,13 +1370,20 @@ async function sendAIChat(preset) {
   aiChatHistory.push({role:'ai', text:'⏳ جاري التفكير...', loading:true});
   renderChatMsgs();
 
-  const casesSummary = store.cases.slice(0,15).map(c=>`${c.name} (${c.type}, ${c.status}, عميل: ${c.client})`).join(' | ');
-  const historyText = aiChatHistory.filter(m=>!m.loading).slice(-8).map(m=>`${m.role==='user'?'المحامي':'المساعد'}: ${m.text}`).join('\n');
+  const c = store.cases.find(x=>x.id===currentLegalCaseId);
+  let caseContext = 'لا توجد قضية محددة لهذه المحادثة.';
+  if (c) {
+    const attNames = (c.attachments||[]).map(a=>a.name).join('، ') || 'لا توجد مستندات مرفقة';
+    caseContext = `القضية المحددة لهذه المحادثة: "${c.name}" — النوع: ${c.type} — الحالة: ${c.status} — العميل: ${c.client} — الخصم: ${c.opponent||'غير محدد'} — المحكمة: ${c.court||'غير محددة'} — رقم القضية: ${c.caseNum||'غير محدد'}.\nالمستندات المرفقة بالقضية (بالاسم فقط، من غير محتوى): ${attNames}`;
+  }
+
+  const historyText = aiChatHistory.filter(m=>!m.loading).slice(-10).map(m=>`${m.role==='user'?'المحامي':'المساعد'}: ${m.text}`).join('\n');
 
   const prompt = `أنت مساعد قانوني ذكي متخصص في القانون المصري، تساعد محامياً مصرياً في عمله اليومي. مهامك تشمل: تلخيص قضايا، اقتراح دفوع قانونية، صياغة أولية لمذكرات وإنذارات وعقود، توضيح مواعيد الاستئناف والطعن وسقوط المواعيد القانونية، والإشارة العامة لمبادئ قانونية معروفة.
 تنبيه مهم: أنت أداة مساعدة وليست بديلاً عن المراجعة القانونية الدقيقة من المحامي نفسه، فلا تجزم بأرقام أحكام نقض أو مواد قانونية إلا لو كنت متأكداً، وانصح بالمراجعة عند الشك.
+ملحوظة: لو المحامي سأل عن محتوى مستند مرفق، وضّح له إنك تقدر تشوف اسم المستند بس مش محتواه الكامل حاليًا، واطلب منه يلخصلك أهم نقاطه في رسالته عشان تقدر تساعده بدقة.
 
-بعض قضايا المكتب المسجلة (للسياق فقط، استخدمها لو السؤال يخصها): ${casesSummary || 'لا توجد قضايا مسجلة بعد'}
+${caseContext}
 
 سياق المحادثة السابق:
 ${historyText}
@@ -1291,13 +1398,18 @@ ${historyText}
     aiChatHistory = aiChatHistory.filter(m=>!m.loading);
     aiChatHistory.push({role:'ai', text: '⚠️ ' + (e.message || 'تعذر الاتصال بالذكاء الاصطناعي.')});
   }
+  saveLegalChat();
   renderChatMsgs();
 }
 
 function renderChatMsgs() {
   const el = document.getElementById('chat-msgs');
   if (!el) return;
-  el.innerHTML = aiChatHistory.map(m => `<div class="chat-msg ${m.role==='user'?'user':'ai'}">${(m.text||'').replace(/</g,'&lt;')}</div>`).join('');
+  if (!aiChatHistory.length) {
+    el.innerHTML = `<div class="chat-msg ai">أهلاً بحضرتك. اسألني أي سؤال قانوني: صياغة مذكرة أو إنذار، مواعيد استئناف وطعن، دفوع مناسبة، أو تلخيص موقف قانوني. اختار قضية من فوق لو حابب أربط المحادثة بيها وأرفق مستنداتها.</div>`;
+    return;
+  }
+  el.innerHTML = aiChatHistory.map((m,i) => `<div class="chat-msg ${m.role==='user'?'user':'ai'}">${(m.text||'').replace(/</g,'&lt;')}${(m.role==='ai' && !m.loading) ? `<div style="margin-top:6px"><button onclick="speakText(${JSON.stringify(m.text).replace(/"/g,'&quot;')})" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:14px;padding:0">🔊 استمع</button></div>` : ''}</div>`).join('');
   el.scrollTop = el.scrollHeight;
 }
 
