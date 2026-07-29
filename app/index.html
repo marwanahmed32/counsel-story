@@ -1057,8 +1057,7 @@ function saveProfile() {
 }
 
 async function initApp() {
-  document.getElementById('hdr-welcome').textContent = `مرحباً، ${store.profile.name}`;
-  document.getElementById('hdr-name').textContent = 'Counsel Story';
+  document.getElementById('hdr-name').textContent = store.profile.name || 'مستشار';
   initSubscription();
   initSubscriberDb();
 
