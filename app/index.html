@@ -2647,7 +2647,6 @@ function sessCardHTML(s, caseName, withSMS=true, caseId=null) {
       <div class="sn">${caseName}</div>
       <div class="sd2">${s.desc}</div>
       <div class="st2">⏰ ${s.time} · ${DAYS[d.getDay()]}</div>
-      ${withSMS&&s.status==='upcoming'?`<div class="sms-n">📲 تنبيه قبل 24 ساعة</div>`:''}
       ${caseId&&s.status==='upcoming'?`<button class="wa-btn" style="margin-top:6px" onclick="sendWhatsAppSession(${caseId},${s.id})">📲 واتساب للعميل</button>`:''}
     </div>
     <span class="badge ${s.status==='done'?'bc':'ba'}">${s.status==='done'?'✓':'قادمة'}</span>
@@ -2672,10 +2671,7 @@ function renderSessions() {
   const allSess = store.cases.flatMap(c=>c.sessions.map(s=>({...s,caseName:c.name,caseId:c.id})));
   const upcoming = allSess.filter(s=>s.status==='upcoming').sort((a,b)=>a.date.localeCompare(b.date));
   const done = allSess.filter(s=>s.status==='done').sort((a,b)=>b.date.localeCompare(a.date));
-  let html = `<div class="sbox">
-    <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
-    <div><div class="sbt">تنبيه SMS تلقائي قبل 24 ساعة</div><div class="sbs">على ${store.profile?.phone||"—"}</div></div>
-  </div>`;
+  let html = '';
   html += `<div class="sct">القادمة (${upcoming.length})</div>`;
   if (upcoming.length) upcoming.forEach(s=>{ html += sessCardHTML(s,s.caseName,true,s.caseId); });
   else html += `<div style="font-size:13px;color:var(--td);padding:8px 0 14px;">لا جلسات قادمة</div>`;
@@ -3005,7 +3001,6 @@ function openCase(id) {
       <div class="si">
         <div class="sd2">${s.desc}</div>
         <div class="st2">⏰ ${s.time} · ${DAYS[d.getDay()]}</div>
-        <div class="sms-n">📲 تنبيه SMS</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
         <button onclick="markDone(${c.id},${s.id})" style="background:var(--ok-bg);border:1px solid var(--ok-br);color:var(--ok);font-size:11px;padding:5px 9px;border-radius:7px;cursor:pointer;font-weight:700;font-family:inherit">✓ منتهية</button>
