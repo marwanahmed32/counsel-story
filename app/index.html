@@ -1155,15 +1155,6 @@ function scheduleReminders() {
 }
 
 function doReminders() {
-  const tmr = getTomorrow();
-  const allSess = store.cases.flatMap(c => c.sessions.map(s => ({...s, caseName:c.name})));
-  const alerts = allSess.filter(s => s.status==='upcoming' && s.date===tmr);
-  alerts.forEach(s => {
-    new Notification('⚖️ تذكير جلسة غداً', {
-      body: `${s.caseName} — الساعة ${s.time}`,
-      icon: ''
-    });
-  });
   const overdue = store.cases.filter(c => c.status !== 'closed' && (c.totalFee - c.paid) > 0);
   if (overdue.length > 0) {
     document.getElementById('notif-dot').classList.add('show');
@@ -1171,11 +1162,8 @@ function doReminders() {
 }
 
 function checkNotifDot() {
-  const tmr = getTomorrow();
-  const allSess = store.cases.flatMap(c => c.sessions.map(s => ({...s})));
-  const hasTmr = allSess.some(s => s.status==='upcoming' && s.date===tmr);
   const hasOverdue = store.cases.some(c => c.status!=='closed' && (c.totalFee-c.paid)>0);
-  if (hasTmr || hasOverdue) document.getElementById('notif-dot').classList.add('show');
+  if (hasOverdue) document.getElementById('notif-dot').classList.add('show');
 }
 
 function getTomorrow() {
@@ -1427,17 +1415,6 @@ function sendWhatsAppSession(caseId, sessId) {
   const d = new Date(s.date);
   const msg = `تحية طيبة أستاذ/ة ${c.client}،\nنفيدكم بأن قضيتكم "${c.name}" لها جلسة بتاريخ ${s.date} (${DAYS[d.getDay()]}) الساعة ${s.time}.\n${s.desc?('الموضوع: '+s.desc):''}\nمع تحيات مكتب ${store.profile?.name||''}.`;
   window.open(waLink(c.phone, msg), '_blank');
-}
-
-// تذكير للمحامي نفسه (على رقمه هو) — مش رسالة للعميل
-function sendWhatsAppSelfReminder(caseId, sessId) {
-  const c = store.cases.find(x=>x.id===caseId);
-  const s = c?.sessions.find(x=>x.id===sessId);
-  if (!c || !s) return;
-  if (!store.profile?.phone) { alert('لا يوجد رقم هاتف مسجل لك. أضفه من بياناتك الشخصية.'); return; }
-  const d = new Date(s.date);
-  const msg = `⚖️ تذكير جلسة ${s.date===getToday()?'اليوم':'غداً'}\nالقضية: ${c.name}\nالموكل: ${c.client}\nالتاريخ: ${s.date} (${DAYS[d.getDay()]})\nالساعة: ${s.time}\n${s.desc?('الموضوع: '+s.desc):''}`;
-  window.open(waLink(store.profile.phone, msg), '_blank');
 }
 
 function sendWhatsAppGeneral(caseId) {
@@ -2479,7 +2456,7 @@ function renderHome() {
         <div class="abt">${countdownText}</div>
         <div class="abs">${nextSession.caseName} — ${nextSession.date} — ${nextSession.time}</div>
       </div>
-      <button class="wa-btn" onclick="sendWhatsAppSelfReminder(${nextSession.caseId},${nextSession.id})">📲 ذكّرني بالواتساب</button>
+      <button class="wa-btn" onclick="sendWhatsAppSession(${nextSession.caseId},${nextSession.id})">📲 ذكّر العميل بالواتساب</button>
     </div>`;
   }
 
@@ -2945,10 +2922,6 @@ function showAddSession(preselect) {
       <div class="fg"><label>الوقت</label><input id="sf-time" type="time" value="10:00"/></div>
     </div>
     <div class="fg"><label>وصف الجلسة</label><input id="sf-desc" placeholder="جلسة استماع، تقديم مستندات..."/></div>
-    <div class="sbox" style="margin-bottom:4px">
-      <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
-      <div class="sbt" style="opacity:.6">📅 تذكير الجلسات — <span style="color:var(--warn)">🚧 قيد التطوير حاليًا</span></div>
-    </div>
     <div class="br"><button class="bcan" onclick="closeModal()">إلغاء</button><button class="bsave" onclick="addSession()">💾 حفظ</button></div>`);
 }
 
