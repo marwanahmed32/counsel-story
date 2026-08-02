@@ -426,15 +426,30 @@ async function registerSubscriber() {
     return;
   }
 
-  // نتأكد عبر JSONP (قناة تانية مختلفة تمامًا) قبل ما نعتبرها فشلت فعلاً
-  try {
-    const check = await jsonpGet({ phone: store.profile.phone, t: Date.now() });
-    if (!check.notFound) {
-      store.profile._registered = true;
-      save();
-      return;
-    }
-  } catch(e) { /* حتى JSONP فشل — مشكلة اتصال حقيقية بالإنترنت */ }
+  // لو السيرفر رد برسالة رفض صريحة (مش مشكلة اتصال) — نوريها للمستخدم فورًا
+  // ومنعملش fallback يخلينا نتجاهلها (زي حالة "الرقم ده مسجّل بحساب موجود بالفعل")
+  // وكمان نصفّر البيانات المحلية الخاطئة ونرجّعه لشاشة تسجيل الدخول الصح
+  if (result.ok && result.data && result.data.success === false && result.data.error) {
+    alert('⚠️ ' + result.data.error + '\n\nهيتم تحويلك لشاشة تسجيل الدخول.');
+    store.profile = null;
+    store.subscription = null;
+    save();
+    try { sessionStorage.setItem('qd_show_login_next', '1'); } catch(e) {}
+    location.reload();
+    return;
+  }
+
+  // نتأكد عبر JSONP (قناة تانية مختلفة تمامًا) بس لو فشل الاتصال أصلاً (result.ok=false)
+  if (!result.ok) {
+    try {
+      const check = await jsonpGet({ phone: store.profile.phone, t: Date.now() });
+      if (!check.notFound) {
+        store.profile._registered = true;
+        save();
+        return;
+      }
+    } catch(e) { /* حتى JSONP فشل — مشكلة اتصال حقيقية بالإنترنت */ }
+  }
 
   console.error('❌ فشل تسجيل البيانات:', result);
   alert('⚠️ تعذر تسجيل بياناتك في قاعدة البيانات. تأكد من اتصال الإنترنت وحاول تفتح التطبيق تاني بعد شوية.');
@@ -531,10 +546,11 @@ async function syncSubscriberRecord() {
 
   if (!data) return;
 
-  // لو اتمسح من الشيت → أرجعه لشاشة التسجيل
+  // لو اتمسح من الشيت → أرجعه لشاشة التسجيل، ونمسح كل بياناته المحلية القديمة
+  // (القضايا والجلسات) عشان مايتلخبطش بحساب تاني هيتسجل بعده على نفس الجهاز
   if (data.notFound) {
-    store.profile = null; store.subscription = null;
-    safeSet('qd_profile','null'); safeSet('qd_subscription','null');
+    store.profile = null; store.subscription = null; store.cases = [];
+    safeSet('qd_profile','null'); safeSet('qd_subscription','null'); safeSet('qd_cases','[]');
     save(); location.reload(); return;
   }
 
@@ -1028,6 +1044,12 @@ function showOnboard() {
       </div>
     </div>
   </div>`);
+  try {
+    if (sessionStorage.getItem('qd_show_login_next')) {
+      sessionStorage.removeItem('qd_show_login_next');
+      toggleOnboardMode('login');
+    }
+  } catch(e) {}
 }
 
 function toggleOnboardMode(mode) {
@@ -1096,6 +1118,7 @@ function submitOnboard() {
   if (!pass || pass.length < 4) { alert('كلمة السر لازم تكون 4 حروف/أرقام على الأقل'); return; }
   if (pass !== pass2) { alert('كلمة السر وتأكيدها مش متطابقين'); return; }
   store.profile = { name, phone, password: pass, specialty: '', websiteUrl: '', _v6: true };
+  store.cases = []; // تسجيل جديد = بداية نظيفة، منع أي بيانات قديمة من جهاز/حساب سابق من التسرب
   save();
   document.getElementById('onboard').remove();
   initApp();
