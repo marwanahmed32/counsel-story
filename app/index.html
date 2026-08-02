@@ -1069,9 +1069,9 @@ async function submitLogin() {
   if (!password) { alert('من فضلك أدخل كلمة السر'); return; }
 
   const btn = document.querySelector('#ob-form-login .ob-btn');
-  btn.disabled = true; btn.textContent = 'جاري التحقق واسترجاع بياناتك...';
+  btn.disabled = true; btn.textContent = 'جاري التحقق...';
 
-  const result = await postForm({ action:'login', phone, password }, 40000);
+  const result = await postForm({ action:'login', phone, password }, 20000);
   btn.disabled = false; btn.textContent = 'تسجيل الدخول ←';
 
   if (!result.ok) {
@@ -1087,25 +1087,46 @@ async function submitLogin() {
     alert('❌ ' + (data.error || 'كلمة السر غير صحيحة، حاول تاني.'));
     return;
   }
+
+  // الدخول نجح — نفتح التطبيق فورًا (ما نستناش استرجاع القضايا الأول)
   store.profile = {
     name: data.name || '', phone, password,
     specialty: data.specialty || '', websiteUrl: data.websiteUrl || '',
     _v6: true, _registered: true
   };
-  if (Array.isArray(data.cases)) {
-    store.cases = data.cases.map(c => ({
-      ...c,
-      sessions: c.sessions || [],
-      payments: c.payments || [],
-      adminTasks: c.adminTasks || [],
-      attachments: c.attachments || [],
-      notes: c.notes || ''
-    }));
-  }
+  store.cases = [];
   save();
   document.getElementById('onboard').remove();
   initApp();
-  alert('✅ أهلاً بيك تاني، ' + (data.name || '') + '! تم استرجاع قضاياك وجلساتك.');
+
+  // نجيب القضايا والجلسات في طلب منفصل بعد كده، من غير ما نعطّل الدخول
+  fetchMyCasesInBackground();
+}
+
+async function fetchMyCasesInBackground() {
+  if (!store.profile?.phone) return;
+  try {
+    const result = await postForm({ action:'getMyData', phone: store.profile.phone }, 45000);
+    if (result.ok && result.data && result.data.success && Array.isArray(result.data.cases)) {
+      store.cases = result.data.cases.map(c => ({
+        ...c,
+        sessions: c.sessions || [],
+        payments: c.payments || [],
+        adminTasks: c.adminTasks || [],
+        attachments: c.attachments || [],
+        notes: c.notes || ''
+      }));
+      save();
+      render(true);
+      if (store.cases.length) {
+        alert(`✅ تم استرجاع ${store.cases.length} قضية من حسابك.`);
+      }
+    } else {
+      console.warn('⚠️ تعذر استرجاع القضايا:', result);
+    }
+  } catch(e) {
+    console.warn('⚠️ فشل استرجاع القضايا في الخلفية:', e);
+  }
 }
 
 function submitOnboard() {
