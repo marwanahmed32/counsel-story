@@ -1069,9 +1069,9 @@ async function submitLogin() {
   if (!password) { alert('من فضلك أدخل كلمة السر'); return; }
 
   const btn = document.querySelector('#ob-form-login .ob-btn');
-  btn.disabled = true; btn.textContent = 'جاري التحقق...';
+  btn.disabled = true; btn.textContent = 'جاري التحقق واسترجاع بياناتك...';
 
-  const result = await postForm({ action:'login', phone, password });
+  const result = await postForm({ action:'login', phone, password }, 40000);
   btn.disabled = false; btn.textContent = 'تسجيل الدخول ←';
 
   if (!result.ok) {
