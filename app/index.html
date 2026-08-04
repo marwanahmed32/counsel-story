@@ -464,7 +464,7 @@ function postForm(payload, timeoutMs = 20000) {
 async function registerSubscriber() {
   if (!store.profile?.phone || !store.profile?.name) return;
   if (store.profile._registered) return; // سجّل قبل كده
-  const result = await postForm({ action:'register', phone: store.profile.phone, name: store.profile.name });
+  const result = await postForm({ action:'register', phone: store.profile.phone, name: store.profile.name, password: store.profile.password || '' });
 
   if (result.ok && result.data.success) {
     store.profile._registered = true;
@@ -472,15 +472,28 @@ async function registerSubscriber() {
     return;
   }
 
-  // نتأكد عبر JSONP (قناة تانية مختلفة تمامًا) قبل ما نعتبرها فشلت فعلاً
-  try {
-    const check = await jsonpGet({ phone: store.profile.phone, t: Date.now() });
-    if (!check.notFound) {
-      store.profile._registered = true;
-      save();
-      return;
-    }
-  } catch(e) { /* حتى JSONP فشل — مشكلة اتصال حقيقية بالإنترنت */ }
+  // لو السيرفر رد برسالة رفض صريحة (الرقم مسجّل بحساب موجود بكلمة سر مختلفة) — نوريها فورًا
+  if (result.ok && result.data && result.data.success === false && result.data.error) {
+    alert('⚠️ ' + result.data.error + '\n\nهيتم تحويلك لشاشة تسجيل الدخول.');
+    store.profile = null;
+    store.subscription = null;
+    save();
+    try { sessionStorage.setItem('qd_show_login_next', '1'); } catch(e) {}
+    location.reload();
+    return;
+  }
+
+  // نتأكد عبر JSONP (قناة تانية مختلفة تمامًا) بس لو فشل الاتصال أصلاً
+  if (!result.ok) {
+    try {
+      const check = await jsonpGet({ phone: store.profile.phone, t: Date.now() });
+      if (!check.notFound) {
+        store.profile._registered = true;
+        save();
+        return;
+      }
+    } catch(e) { /* حتى JSONP فشل — مشكلة اتصال حقيقية بالإنترنت */ }
+  }
 
   console.error('❌ فشل تسجيل البيانات:', result);
   alert('⚠️ تعذر تسجيل بياناتك في قاعدة البيانات. تأكد من اتصال الإنترنت وحاول تفتح التطبيق تاني بعد شوية.');
@@ -577,10 +590,11 @@ async function syncSubscriberRecord() {
 
   if (!data) return;
 
-  // لو اتمسح من الشيت → أرجعه لشاشة التسجيل
+  // لو اتمسح من الشيت → أرجعه لشاشة التسجيل، ونمسح بياناته المحلية القديمة
+  // عشان مايتلخبطش بحساب تاني هيتسجل بعده على نفس الجهاز
   if (data.notFound) {
-    store.profile = null; store.subscription = null;
-    safeSet('qd_profile','null'); safeSet('qd_subscription','null');
+    store.profile = null; store.subscription = null; store.cases = [];
+    safeSet('qd_profile','null'); safeSet('qd_subscription','null'); safeSet('qd_cases','[]');
     save(); location.reload(); return;
   }
 
@@ -1000,26 +1014,176 @@ async function createFirstOffice(userId) {
   save(); closeModal(); initApp();
 }
 
+// ─── تنبيه لطيف لإضافة كلمة سر للحسابات القديمة (بدون لمس أي بيانات) ──
+function promptSetPassword() {
+  mset(`<div class="mh"></div><h2>🔒 أمّن حسابك</h2>
+    <div style="font-size:13px;color:var(--tm);margin-bottom:16px;line-height:1.7">
+      لسه معندكش كلمة سر مسجّلة. ضيفها دلوقتي عشان تقدر تدخل بنفس حسابك (وقضاياك وجلساتك) من أي جهاز تاني في أي وقت.
+    </div>
+    <div class="fg"><label>كلمة سر جديدة</label>${pwFieldHTML('sp-pass', '4 حروف/أرقام على الأقل')}</div>
+    <div class="fg"><label>تأكيد كلمة السر</label>${pwFieldHTML('sp-pass2', 'أعد كتابتها')}</div>
+    <div class="br">
+      <button class="bcan" onclick="closeModal()">لاحقًا</button>
+      <button class="bsave" onclick="saveNewPassword()">💾 حفظ كلمة السر</button>
+    </div>`);
+}
+
+async function saveNewPassword() {
+  const pass = document.getElementById('sp-pass').value;
+  const pass2 = document.getElementById('sp-pass2').value;
+  if (!pass || pass.length < 4) { alert('كلمة السر لازم تكون 4 حروف/أرقام على الأقل'); return; }
+  if (pass !== pass2) { alert('كلمة السر وتأكيدها مش متطابقين'); return; }
+
+  store.profile.password = pass;
+  save();
+  closeModal();
+
+  const result = await postForm({ action:'setPassword', phone: store.profile.phone, password: pass });
+  if (!result.ok || !result.data.success) {
+    console.warn('⚠️ تعذر حفظ كلمة السر في الشيت، هتتحفظ محليًا وتتزامن لاحقًا.');
+  } else {
+    alert('✅ تم حفظ كلمة السر. تقدر تسجّل دخول بيها من أي جهاز تاني بنفس رقم هاتفك.');
+  }
+}
+
+// ─── حقل كلمة سر بزرار إظهار/إخفاء (تصميم موحّد لكل حقول الباسورد) ──
+function pwFieldHTML(id, placeholder) {
+  return `<div style="position:relative;margin-bottom:12px">
+    <input class="ob-inp" id="${id}" type="password" placeholder="${placeholder}" style="margin-bottom:0;padding-left:46px"/>
+    <button type="button" onclick="togglePwField('${id}', this)" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:19px;color:var(--tm);padding:4px;line-height:1">👁️</button>
+  </div>`;
+}
+function togglePwField(id, btn) {
+  const inp = document.getElementById(id);
+  if (!inp) return;
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? '🙈' : '👁️';
+}
+
 function showOnboard() {
   document.body.insertAdjacentHTML('beforeend', `
   <div class="onboard" id="onboard">
     <div class="ob-logo"><svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg></div>
-    <div class="ob-title">إدارة قضايا المستشار</div>
-    <div class="ob-sub">مرحباً بك في نظام إدارة القضايا<br>من فضلك أدخل بياناتك للبدء</div>
-    <div class="ob-form">
+    <div class="ob-title" id="ob-title">إدارة قضايا المستشار</div>
+    <div class="ob-sub" id="ob-sub">مرحباً بك في نظام إدارة القضايا<br>من فضلك أدخل بياناتك للبدء</div>
+    <div class="ob-form" id="ob-form-register">
       <input class="ob-inp" id="ob-name" placeholder="اسم المستشار / المحامي *" />
       <input class="ob-inp" id="ob-phone" type="tel" placeholder="رقم الهاتف للتنبيهات * (01xxxxxxxxx)" />
+      ${pwFieldHTML('ob-pass', 'كلمة سر * (هتستخدمها لو دخلت من جهاز تاني)')}
+      ${pwFieldHTML('ob-pass2', 'تأكيد كلمة السر *')}
       <button class="ob-btn" onclick="submitOnboard()">ابدأ الآن ←</button>
+      <div style="text-align:center;margin-top:14px;font-size:13px;color:var(--tm)">
+        عندك حساب بالفعل على جهاز تاني؟
+        <a href="#" onclick="toggleOnboardMode('login');return false" style="color:var(--gold);font-weight:700">سجّل دخول</a>
+      </div>
+    </div>
+    <div class="ob-form" id="ob-form-login" style="display:none">
+      <input class="ob-inp" id="ob-login-phone" type="tel" placeholder="رقم الهاتف المسجّل * (01xxxxxxxxx)" />
+      ${pwFieldHTML('ob-login-pass', 'كلمة السر *')}
+      <button class="ob-btn" onclick="submitLogin()">تسجيل الدخول ←</button>
+      <div style="text-align:center;margin-top:14px;font-size:13px;color:var(--tm)">
+        لسه معملتش حساب؟
+        <a href="#" onclick="toggleOnboardMode('register');return false" style="color:var(--gold);font-weight:700">سجّل حساب جديد</a>
+      </div>
     </div>
   </div>`);
+  try {
+    if (sessionStorage.getItem('qd_show_login_next')) {
+      sessionStorage.removeItem('qd_show_login_next');
+      toggleOnboardMode('login');
+    }
+  } catch(e) {}
+}
+
+function toggleOnboardMode(mode) {
+  const isLogin = mode === 'login';
+  document.getElementById('ob-form-register').style.display = isLogin ? 'none' : 'block';
+  document.getElementById('ob-form-login').style.display = isLogin ? 'block' : 'none';
+  document.getElementById('ob-title').textContent = isLogin ? 'تسجيل الدخول' : 'إدارة قضايا المستشار';
+  document.getElementById('ob-sub').innerHTML = isLogin
+    ? 'ادخل نفس رقم الهاتف وكلمة السر اللي سجّلت بيهم أول مرة'
+    : 'مرحباً بك في نظام إدارة القضايا<br>من فضلك أدخل بياناتك للبدء';
+}
+
+async function submitLogin() {
+  const phone = document.getElementById('ob-login-phone').value.trim();
+  const password = document.getElementById('ob-login-pass').value;
+  if (!phone) { alert('من فضلك أدخل رقم الهاتف'); return; }
+  if (!password) { alert('من فضلك أدخل كلمة السر'); return; }
+
+  const btn = document.querySelector('#ob-form-login .ob-btn');
+  btn.disabled = true; btn.textContent = 'جاري التحقق...';
+
+  const result = await postForm({ action:'login', phone, password }, 20000);
+  btn.disabled = false; btn.textContent = 'تسجيل الدخول ←';
+
+  if (!result.ok) {
+    alert('⚠️ تعذر الاتصال. تأكد من الإنترنت وحاول تاني.');
+    return;
+  }
+  const data = result.data;
+  if (data.notFound) {
+    alert('مفيش حساب مسجّل بالرقم ده. سجّلي حساب جديد.');
+    return;
+  }
+  if (!data.success) {
+    alert('❌ ' + (data.error || 'كلمة السر غير صحيحة، حاول تاني.'));
+    return;
+  }
+
+  // الدخول نجح — نفتح التطبيق فورًا (ما نستناش استرجاع القضايا الأول)
+  store.profile = {
+    name: data.name || '', phone, password,
+    specialty: data.specialty || '', websiteUrl: data.websiteUrl || '',
+    _v6: true, _registered: true
+  };
+  store.cases = [];
+  save();
+  document.getElementById('onboard').remove();
+  initApp();
+
+  // نجيب القضايا والجلسات في طلب منفصل بعد كده، من غير ما نعطّل الدخول
+  fetchMyCasesInBackground();
+}
+
+async function fetchMyCasesInBackground() {
+  if (!store.profile?.phone) return;
+  try {
+    const result = await postForm({ action:'getMyData', phone: store.profile.phone }, 45000);
+    if (result.ok && result.data && result.data.success && Array.isArray(result.data.cases)) {
+      store.cases = result.data.cases.map(c => ({
+        ...c,
+        sessions: c.sessions || [],
+        payments: c.payments || [],
+        adminTasks: c.adminTasks || [],
+        attachments: c.attachments || [],
+        notes: c.notes || ''
+      }));
+      save();
+      render(true);
+      if (store.cases.length) {
+        alert(`✅ تم استرجاع ${store.cases.length} قضية من حسابك.`);
+      }
+    } else {
+      console.warn('⚠️ تعذر استرجاع القضايا:', result);
+    }
+  } catch(e) {
+    console.warn('⚠️ فشل استرجاع القضايا في الخلفية:', e);
+  }
 }
 
 function submitOnboard() {
   const name = document.getElementById('ob-name').value.trim();
   const phone = document.getElementById('ob-phone').value.trim();
+  const pass = document.getElementById('ob-pass').value;
+  const pass2 = document.getElementById('ob-pass2').value;
   if (!name) { alert('من فضلك أدخل الاسم'); return; }
   if (!phone) { alert('من فضلك أدخل رقم الهاتف للتنبيهات'); return; }
-  store.profile = { name, phone, specialty: '', websiteUrl: '', _v6: true };
+  if (!pass || pass.length < 4) { alert('كلمة السر لازم تكون 4 حروف/أرقام على الأقل'); return; }
+  if (pass !== pass2) { alert('كلمة السر وتأكيدها مش متطابقين'); return; }
+  store.profile = { name, phone, password: pass, specialty: '', websiteUrl: '', _v6: true };
+  store.cases = []; // تسجيل جديد = بداية نظيفة
   save();
   document.getElementById('onboard').remove();
   initApp();
@@ -1120,6 +1284,10 @@ async function initApp() {
       applyRolePermissions();
       render(true);
       syncCasesToSheet();
+      // لو حسابك قديم من قبل ميزة كلمة السر، نديك تنبيه لطيف تضيفها
+      if (!store.profile.password && !isAdminAccount()) {
+        setTimeout(promptSetPassword, 800);
+      }
     }
   } catch (e) {
     console.error('initApp render step failed:', e);
