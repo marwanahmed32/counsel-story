@@ -1115,7 +1115,12 @@ async function submitLogin() {
   const btn = document.querySelector('#ob-form-login .ob-btn');
   btn.disabled = true; btn.textContent = 'جاري التحقق...';
 
-  const result = await postForm({ action:'login', phone, password }, 20000);
+  let result = await postForm({ action:'login', phone, password }, 25000);
+  if (!result.ok) {
+    // محاولة تانية صامتة — أحيانًا أول طلب بياخد وقت أطول عادي (تشغيل السيرفر لأول مرة)
+    btn.textContent = 'جاري المحاولة تاني...';
+    result = await postForm({ action:'login', phone, password }, 25000);
+  }
   btn.disabled = false; btn.textContent = 'تسجيل الدخول ←';
 
   if (!result.ok) {
