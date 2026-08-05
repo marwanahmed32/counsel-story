@@ -399,18 +399,31 @@ function initSubscriberDb() {}
 // ═══════════════════════════════════════════════════════════
 
 // قراءة (GET) عبر JSONP
-function jsonpGet(params, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    const cbName = 'qd_jsonp_' + Date.now() + '_' + Math.floor(Math.random()*1e6);
-    const script = document.createElement('script');
-    const timer = setTimeout(() => { cleanup(); reject(new Error('jsonp timeout')); }, timeoutMs);
-    function cleanup() { delete window[cbName]; script.remove(); clearTimeout(timer); }
-    window[cbName] = (data) => { cleanup(); resolve(data); };
-    const qs = new URLSearchParams({ ...params, callback: cbName }).toString();
-    script.src = `${APPS_SCRIPT_URL}?${qs}`;
-    script.onerror = () => { cleanup(); reject(new Error('jsonp script error')); };
-    document.body.appendChild(script);
-  });
+async function jsonpGet(params, timeoutMs = 15000) {
+  const qsPlain = new URLSearchParams(params).toString();
+  const plainUrl = `${APPS_SCRIPT_URL}?${qsPlain}`;
+
+  // نجرب fetch العادي الأول (أثبت إنه أوثق قناة في هذا المتصفح)
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(plainUrl, { cache: 'no-store', signal: ctrl.signal });
+    clearTimeout(t);
+    return await res.json();
+  } catch (fetchErr) {
+    // fetch اتحجب (CORS أو مشكلة شبكة) — نرجع لطريقة script tag / JSONP الاحتياطية
+    return new Promise((resolve, reject) => {
+      const cbName = 'qd_jsonp_' + Date.now() + '_' + Math.floor(Math.random()*1e6);
+      const script = document.createElement('script');
+      const timer = setTimeout(() => { cleanup(); reject(new Error('jsonp timeout')); }, timeoutMs);
+      function cleanup() { delete window[cbName]; script.remove(); clearTimeout(timer); }
+      window[cbName] = (data) => { cleanup(); resolve(data); };
+      const qs = new URLSearchParams({ ...params, callback: cbName }).toString();
+      script.src = `${APPS_SCRIPT_URL}?${qs}`;
+      script.onerror = () => { cleanup(); reject(new Error('jsonp script error')); };
+      document.body.appendChild(script);
+    });
+  }
 }
 
 // كتابة (POST) عبر فورم مخفي جوه iframe + استقبال الرد بـ postMessage
@@ -514,8 +527,14 @@ async function pushProfileToSheet() {
 }
 
 // يبعت بيانات القضايا (ملخص) للشيت — لجدول القضايا المنفصل
+// يمنع مزامنة القضايا للشيت قبل ما نتأكد إننا جبنا القضايا الموجودة فعلاً أول
+// (مهم بعد تسجيل الدخول من جهاز جديد — لو حد ضاف قضية بسرعة قبل ما نجيب القديمة،
+// المزامنة كانت بتمسح القديمة من الشيت وتحط الجديدة بس بدالها)
+let casesLoadedFromServer = true;
+
 let casesSyncTimer = null;
 function syncCasesToSheet() {
+  if (!casesLoadedFromServer) return; // لسه مستنيين نجيب القضايا الأصلية الأول
   clearTimeout(casesSyncTimer);
   casesSyncTimer = setTimeout(async () => {
     if (!store.profile?.phone) return;
@@ -1181,6 +1200,7 @@ async function submitLogin() {
     _v6: true, _registered: true
   };
   store.cases = [];
+  casesLoadedFromServer = false; // نمنع أي مزامنة للشيت لحد ما نجيب القضايا الأصلية الأول
   save();
   document.getElementById('onboard').remove();
   initApp();
@@ -1194,7 +1214,7 @@ async function fetchMyCasesInBackground() {
   try {
     const data = await jsonpGet({ action:'getMyData', phone: store.profile.phone, t: Date.now() }, 30000);
     if (data && data.success && Array.isArray(data.cases)) {
-      store.cases = data.cases.map(c => ({
+      const serverCases = data.cases.map(c => ({
         ...c,
         sessions: c.sessions || [],
         payments: c.payments || [],
@@ -1202,16 +1222,25 @@ async function fetchMyCasesInBackground() {
         attachments: c.attachments || [],
         notes: c.notes || ''
       }));
+      // لو اتضافت قضايا محليًا وإحنا لسه مستنيين الاسترجاع، نضمّها للنتيجة بدل ما نضيّعها
+      const serverIds = new Set(serverCases.map(c => c.id));
+      const localOnly = (store.cases || []).filter(c => !serverIds.has(c.id));
+      store.cases = [...serverCases, ...localOnly];
+      casesLoadedFromServer = true;
       save();
       render(true);
-      if (store.cases.length) {
-        alert(`✅ تم استرجاع ${store.cases.length} قضية من حسابك.`);
+      if (serverCases.length) {
+        alert(`✅ تم استرجاع ${serverCases.length} قضية من حسابك.`);
       }
+      // لو كانت فيه أي قضية اتضافت محليًا وإنتي مستنية الاسترجاع، هنزامنها فورًا دلوقتي
+      syncCasesToSheet();
     } else {
       console.warn('⚠️ تعذر استرجاع القضايا:', data);
+      casesLoadedFromServer = true; // نفك القفل برضو عشان مايفضلش التطبيق واقف من غير مزامنة للأبد
     }
   } catch(e) {
     console.warn('⚠️ فشل استرجاع القضايا في الخلفية:', e);
+    casesLoadedFromServer = true;
   }
 }
 
