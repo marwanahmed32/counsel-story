@@ -1029,8 +1029,8 @@ function promptSetPassword() {
 }
 
 async function saveNewPassword() {
-  const pass = document.getElementById('sp-pass').value;
-  const pass2 = document.getElementById('sp-pass2').value;
+  const pass = document.getElementById('sp-pass').value.trim();
+  const pass2 = document.getElementById('sp-pass2').value.trim();
   if (!pass || pass.length < 4) { alert('كلمة السر لازم تكون 4 حروف/أرقام على الأقل'); return; }
   if (pass !== pass2) { alert('كلمة السر وتأكيدها مش متطابقين'); return; }
 
@@ -1108,7 +1108,7 @@ function toggleOnboardMode(mode) {
 
 async function submitLogin() {
   const phone = document.getElementById('ob-login-phone').value.trim();
-  const password = document.getElementById('ob-login-pass').value;
+  const password = document.getElementById('ob-login-pass').value.trim();
   if (!phone) { alert('من فضلك أدخل رقم الهاتف'); return; }
   if (!password) { alert('من فضلك أدخل كلمة السر'); return; }
 
@@ -1182,8 +1182,8 @@ async function fetchMyCasesInBackground() {
 function submitOnboard() {
   const name = document.getElementById('ob-name').value.trim();
   const phone = document.getElementById('ob-phone').value.trim();
-  const pass = document.getElementById('ob-pass').value;
-  const pass2 = document.getElementById('ob-pass2').value;
+  const pass = document.getElementById('ob-pass').value.trim();
+  const pass2 = document.getElementById('ob-pass2').value.trim();
   if (!name) { alert('من فضلك أدخل الاسم'); return; }
   if (!phone) { alert('من فضلك أدخل رقم الهاتف للتنبيهات'); return; }
   if (!pass || pass.length < 4) { alert('كلمة السر لازم تكون 4 حروف/أرقام على الأقل'); return; }
