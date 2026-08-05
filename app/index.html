@@ -388,7 +388,7 @@ let currentOfficeId = null;
 let currentUserRole = null;
 
 // ─── قاعدة بيانات المشتركين (Google Sheets) ────────────────
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxfTZ88bEK2sR7OvJe2nKcHyJ-42MhjKvD4EVTRk-mDjKPZSgEjDOMVOE3n4y75KZuH/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyszg25dqMYMXqP4ZtUsWyYZDU0kOJYdcugosnuEBXMe_6MDu6nidqAmw1v0rGX-QC6/exec";
 
 function initSubscriberDb() {}
 
@@ -498,14 +498,19 @@ async function registerSubscriber() {
 // يبعت بيانات البروفايل المحدّثة للشيت (بيتنفذ كل ما المستشار يحفظ بياناته)
 async function pushProfileToSheet() {
   if (!store.profile?.phone || !store.profile?.name) return;
-  const result = await postForm({
-    action: 'updateProfile',
-    phone: store.profile.phone,
-    name: store.profile.name,
-    specialty: store.profile.specialty || '',
-    websiteUrl: store.profile.websiteUrl || ''
-  });
-  if (!result.ok) console.warn('⚠️ profile push may have failed:', result);
+  try {
+    const data = await jsonpGet({
+      action: 'updateProfile',
+      phone: store.profile.phone,
+      name: store.profile.name,
+      specialty: store.profile.specialty || '',
+      websiteUrl: store.profile.websiteUrl || '',
+      t: Date.now()
+    }, 20000);
+    if (!data || !data.success) console.warn('⚠️ profile push may have failed:', data);
+  } catch(e) {
+    console.warn('⚠️ profile push failed (اتصال):', e);
+  }
 }
 
 // يبعت بيانات القضايا (ملخص) للشيت — لجدول القضايا المنفصل
@@ -531,6 +536,22 @@ function syncCasesToSheet() {
       attachments: (c.attachments || []).filter(a=>a.url).map(a => ({ name:a.name, url:a.url, thumbUrl:a.thumbUrl||'' })),
       adminTasks: (c.adminTasks || [])
     }));
+    const casesJson = JSON.stringify(summary);
+
+    if (casesJson.length < 6000) {
+      // القناة الموثوقة (GET) — بتشتغل حتى لو POST كان بيفشل في بعض المتصفحات/الشبكات
+      try {
+        const data = await jsonpGet({ action:'syncCases', phone: store.profile.phone, name: store.profile.name || '', cases: casesJson, t: Date.now() }, 20000);
+        if (!data || !data.success) {
+          console.error('❌ فشلت مزامنة القضايا مع الشيت:', data);
+        }
+      } catch(e) {
+        console.error('❌ فشلت مزامنة القضايا مع الشيت (اتصال):', e);
+      }
+      return;
+    }
+
+    // بيانات كبيرة أوي مش هتفضل في حدود رابط GET — نرجع لـ POST
     const result = await postForm({ action:'syncCases', phone: store.profile.phone, name: store.profile.name || '', cases: summary });
     if (!result.ok) {
       console.error('❌ فشلت مزامنة القضايا مع الشيت:', result);
@@ -562,6 +583,18 @@ function syncSessionsToSheet() {
         time: s.time || '10:00',
         desc: s.desc || 'جلسة'
       })));
+    const sessionsJson = JSON.stringify(sessions);
+
+    if (sessionsJson.length < 6000) {
+      try {
+        const data = await jsonpGet({ action:'syncSessions', phone: store.profile.phone, name: store.profile.name || '', sessions: sessionsJson, t: Date.now() }, 20000);
+        if (!data || !data.success) console.warn('⚠️ sessions sync may have failed:', data);
+      } catch(e) {
+        console.warn('⚠️ sessions sync failed (اتصال):', e);
+      }
+      return;
+    }
+
     const result = await postForm({ action:'syncSessions', phone: store.profile.phone, lawyerName: store.profile.name || '', sessions });
     if (!result.ok) console.warn('⚠️ sessions sync may have failed:', result);
   }, 800);
@@ -1238,7 +1271,24 @@ function showProfilePage() {
     <div class="br">
       <button class="bcan" onclick="closeModal()">إغلاق</button>
       <button class="bsave" onclick="saveProfile()">💾 حفظ</button>
-    </div>`);
+    </div>
+    ${!isAdminAccount() ? `<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--br)">
+      <button onclick="logoutAccount()" style="width:100%;background:none;border:1px solid var(--err-br);color:var(--err);padding:12px;border-radius:11px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">🚪 تسجيل خروج</button>
+      <div style="font-size:11px;color:var(--td);text-align:center;margin-top:8px;line-height:1.6">هيتم مسح بياناتك من هذا الجهاز بس. حسابك وقضاياك هيفضلوا محفوظين، وتقدر تدخل تاني بنفس رقم الهاتف وكلمة السر من أي جهاز.</div>
+    </div>` : ''}`);
+}
+
+function logoutAccount() {
+  if (!confirm('هيتم تسجيل خروجك من الجهاز ده. حسابك وقضاياك هيفضلوا محفوظين، وتقدر تدخل تاني في أي وقت بنفس رقم الهاتف وكلمة السر. متأكد؟')) return;
+  store.profile = null;
+  store.subscription = null;
+  store.cases = [];
+  safeSet('qd_profile', 'null');
+  safeSet('qd_subscription', 'null');
+  safeSet('qd_cases', '[]');
+  save();
+  try { sessionStorage.setItem('qd_show_login_next', '1'); } catch(e) {}
+  location.reload();
 }
 
 function handleLogoUpload(event) {
