@@ -1115,19 +1115,20 @@ async function submitLogin() {
   const btn = document.querySelector('#ob-form-login .ob-btn');
   btn.disabled = true; btn.textContent = 'جاري التحقق...';
 
-  let result = await postForm({ action:'login', phone, password }, 25000);
-  if (!result.ok) {
-    // محاولة تانية صامتة — أحيانًا أول طلب بياخد وقت أطول عادي (تشغيل السيرفر لأول مرة)
-    btn.textContent = 'جاري المحاولة تاني...';
-    result = await postForm({ action:'login', phone, password }, 25000);
-  }
-  btn.disabled = false; btn.textContent = 'تسجيل الدخول ←';
-
-  if (!result.ok) {
+  let data;
+  try {
+    data = await jsonpGet({ action:'login', phone, password, t: Date.now() }, 20000);
+  } catch(e) {
+    btn.disabled = false; btn.textContent = 'تسجيل الدخول ←';
     alert('⚠️ تعذر الاتصال. تأكد من الإنترنت وحاول تاني.');
     return;
   }
-  const data = result.data;
+  btn.disabled = false; btn.textContent = 'تسجيل الدخول ←';
+
+  if (data.error) {
+    alert('⚠️ ' + data.error);
+    return;
+  }
   if (data.notFound) {
     alert('مفيش حساب مسجّل بالرقم ده. سجّلي حساب جديد.');
     return;
@@ -1155,9 +1156,9 @@ async function submitLogin() {
 async function fetchMyCasesInBackground() {
   if (!store.profile?.phone) return;
   try {
-    const result = await postForm({ action:'getMyData', phone: store.profile.phone }, 45000);
-    if (result.ok && result.data && result.data.success && Array.isArray(result.data.cases)) {
-      store.cases = result.data.cases.map(c => ({
+    const data = await jsonpGet({ action:'getMyData', phone: store.profile.phone, t: Date.now() }, 30000);
+    if (data && data.success && Array.isArray(data.cases)) {
+      store.cases = data.cases.map(c => ({
         ...c,
         sessions: c.sessions || [],
         payments: c.payments || [],
@@ -1171,7 +1172,7 @@ async function fetchMyCasesInBackground() {
         alert(`✅ تم استرجاع ${store.cases.length} قضية من حسابك.`);
       }
     } else {
-      console.warn('⚠️ تعذر استرجاع القضايا:', result);
+      console.warn('⚠️ تعذر استرجاع القضايا:', data);
     }
   } catch(e) {
     console.warn('⚠️ فشل استرجاع القضايا في الخلفية:', e);
