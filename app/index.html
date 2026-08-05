@@ -388,7 +388,7 @@ let currentOfficeId = null;
 let currentUserRole = null;
 
 // ─── قاعدة بيانات المشتركين (Google Sheets) ────────────────
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwDsKO3S5bFDzDbiigbjSrN__KA2mJ3KJxY_dx83N7NZoPeJSWAKvLKzGMvqE4jPiLR/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxfTZ88bEK2sR7OvJe2nKcHyJ-42MhjKvD4EVTRk-mDjKPZSgEjDOMVOE3n4y75KZuH/exec";
 
 function initSubscriberDb() {}
 
@@ -464,17 +464,25 @@ function postForm(payload, timeoutMs = 20000) {
 async function registerSubscriber() {
   if (!store.profile?.phone || !store.profile?.name) return;
   if (store.profile._registered) return; // سجّل قبل كده
-  const result = await postForm({ action:'register', phone: store.profile.phone, name: store.profile.name, password: store.profile.password || '' });
 
-  if (result.ok && result.data.success) {
+  let data;
+  try {
+    data = await jsonpGet({ action:'register', phone: store.profile.phone, name: store.profile.name, password: store.profile.password || '', t: Date.now() }, 20000);
+  } catch(e) {
+    console.error('❌ فشل تسجيل البيانات (اتصال):', e);
+    alert('⚠️ تعذر تسجيل بياناتك في قاعدة البيانات. تأكد من اتصال الإنترنت وحاول تفتح التطبيق تاني بعد شوية.');
+    return;
+  }
+
+  if (data.success) {
     store.profile._registered = true;
     save();
     return;
   }
 
-  // لو السيرفر رد برسالة رفض صريحة (الرقم مسجّل بحساب موجود بكلمة سر مختلفة) — نوريها فورًا
-  if (result.ok && result.data && result.data.success === false && result.data.error) {
-    alert('⚠️ ' + result.data.error + '\n\nهيتم تحويلك لشاشة تسجيل الدخول.');
+  // لو السيرفر رد برسالة رفض صريحة (الرقم مسجّل بحساب موجود، أو كلمة السر مستخدمة من حساب تاني) — نوريها فورًا
+  if (data.error) {
+    alert('⚠️ ' + data.error + '\n\nهيتم تحويلك لشاشة تسجيل الدخول.');
     store.profile = null;
     store.subscription = null;
     save();
@@ -483,19 +491,7 @@ async function registerSubscriber() {
     return;
   }
 
-  // نتأكد عبر JSONP (قناة تانية مختلفة تمامًا) بس لو فشل الاتصال أصلاً
-  if (!result.ok) {
-    try {
-      const check = await jsonpGet({ phone: store.profile.phone, t: Date.now() });
-      if (!check.notFound) {
-        store.profile._registered = true;
-        save();
-        return;
-      }
-    } catch(e) { /* حتى JSONP فشل — مشكلة اتصال حقيقية بالإنترنت */ }
-  }
-
-  console.error('❌ فشل تسجيل البيانات:', result);
+  console.error('❌ فشل تسجيل البيانات:', data);
   alert('⚠️ تعذر تسجيل بياناتك في قاعدة البيانات. تأكد من اتصال الإنترنت وحاول تفتح التطبيق تاني بعد شوية.');
 }
 
@@ -1034,16 +1030,23 @@ async function saveNewPassword() {
   if (!pass || pass.length < 4) { alert('كلمة السر لازم تكون 4 حروف/أرقام على الأقل'); return; }
   if (pass !== pass2) { alert('كلمة السر وتأكيدها مش متطابقين'); return; }
 
+  let data;
+  try {
+    data = await jsonpGet({ action:'setPassword', phone: store.profile.phone, password: pass, t: Date.now() }, 20000);
+  } catch(e) {
+    alert('⚠️ تعذر الاتصال. تأكد من الإنترنت وحاول تاني.');
+    return;
+  }
+
+  if (!data.success) {
+    alert('❌ ' + (data.error || 'تعذر حفظ كلمة السر، حاول تاني.'));
+    return;
+  }
+
   store.profile.password = pass;
   save();
   closeModal();
-
-  const result = await postForm({ action:'setPassword', phone: store.profile.phone, password: pass });
-  if (!result.ok || !result.data.success) {
-    console.warn('⚠️ تعذر حفظ كلمة السر في الشيت، هتتحفظ محليًا وتتزامن لاحقًا.');
-  } else {
-    alert('✅ تم حفظ كلمة السر. تقدر تسجّل دخول بيها من أي جهاز تاني بنفس رقم هاتفك.');
-  }
+  alert('✅ تم حفظ كلمة السر. تقدر تسجّل دخول بيها من أي جهاز تاني بنفس رقم هاتفك.');
 }
 
 // ─── حقل كلمة سر بزرار إظهار/إخفاء (تصميم موحّد لكل حقول الباسورد) ──
