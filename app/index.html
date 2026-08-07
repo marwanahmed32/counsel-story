@@ -15,6 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <title>Counsel Story — سوّق لمكتبك وأدر قضاياك في مكان واحد</title>
 <style>
 :root {
@@ -373,9 +374,9 @@ function isAdminAccount() {
 }
 // ─── بيانات التحصيل اليدوي (اشتراكات Counsel Story) ────────────────
 // رقمك انت (صاحب المشروع) — عبّيه بالشكل الدولي بدون + أو 00 (مثال: 201012345678)
-const ADMIN_WHATSAPP = "201066400606";
+const ADMIN_WHATSAPP = "201062742315";
 // رقم الاستقبال (Instapay أو فودافون كاش) — النص اللي هيظهر للعميل
-const ADMIN_PAYMENT_INFO = "فودافون كاش / انستاباي: 01066400606";
+const ADMIN_PAYMENT_INFO = "فودافون كاش / انستاباي: 01062742315";
 const MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 const DAYS = ['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
 
@@ -388,7 +389,8 @@ let currentOfficeId = null;
 let currentUserRole = null;
 
 // ─── قاعدة بيانات المشتركين (Google Sheets) ────────────────
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyszg25dqMYMXqP4ZtUsWyYZDU0kOJYdcugosnuEBXMe_6MDu6nidqAmw1v0rGX-QC6/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxNjQ0mTs9kjXi25U1vXLgTQ37NMc7Vk7Dl-VWsrIz0Gwsq7Ds6983lqdjHM48bXLUI/exec";
+const GOOGLE_CLIENT_ID = "369532043854-t2fr788td26aph5okj4m8g09gtn60orr.apps.googleusercontent.com";
 
 function initSubscriberDb() {}
 
@@ -638,9 +640,23 @@ async function syncSubscriberRecord() {
 
   if (!data) return;
 
-  // لو اتمسح من الشيت → أرجعه لشاشة التسجيل، ونمسح بياناته المحلية القديمة
-  // عشان مايتلخبطش بحساب تاني هيتسجل بعده على نفس الجهاز
+  // لو الشيت قال "الحساب مش موجود" — قبل ما نصدّق ونمسح بيانات المستخدم،
+  // نتأكد بفحص تاني بعد شوية (تحسبًا لأي خطأ مؤقت في الشبكة أو في الشيت نفسه).
+  // مسح بيانات حقيقية بالغلط أخطر بكتير من إننا نستنى ثانيتين زيادة للتأكد.
   if (data.notFound) {
+    await new Promise(r => setTimeout(r, 1500));
+    let confirm2 = null;
+    try {
+      const res2 = await fetch(url, { cache: 'no-store' });
+      confirm2 = await res2.json();
+    } catch(e) {
+      try { confirm2 = await jsonpGet({ phone: store.profile.phone, t: Date.now() }); }
+      catch(e2) { console.warn('لم نقدر نتأكد من حالة الحساب — نتجاهل الإشارة تحسبًا للأمان.'); return; }
+    }
+    if (!confirm2 || !confirm2.notFound) {
+      // الفحص التاني رجع نتيجة مختلفة (الحساب موجود فعلاً) — كان خطأ عابر، نتجاهله
+      return;
+    }
     store.profile = null; store.subscription = null; store.cases = [];
     safeSet('qd_profile','null'); safeSet('qd_subscription','null'); safeSet('qd_cases','[]');
     save(); location.reload(); return;
@@ -1122,6 +1138,16 @@ function showOnboard() {
     <div class="ob-logo"><svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg></div>
     <div class="ob-title" id="ob-title">إدارة قضايا المستشار</div>
     <div class="ob-sub" id="ob-sub">مرحباً بك في نظام إدارة القضايا<br>من فضلك أدخل بياناتك للبدء</div>
+
+    <div id="google-signin-wrap" style="width:100%;max-width:320px;margin:6px 0 4px;display:flex;flex-direction:column;align-items:center">
+      <div id="google-signin-btn"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;width:100%;max-width:320px;margin:14px 0">
+      <div style="flex:1;height:1px;background:var(--br2)"></div>
+      <div style="font-size:12px;color:var(--tm)">أو</div>
+      <div style="flex:1;height:1px;background:var(--br2)"></div>
+    </div>
+
     <div class="ob-form" id="ob-form-register">
       <input class="ob-inp" id="ob-name" placeholder="اسم المستشار / المحامي *" />
       <input class="ob-inp" id="ob-phone" type="tel" placeholder="رقم الهاتف للتنبيهات * (01xxxxxxxxx)" />
@@ -1149,6 +1175,113 @@ function showOnboard() {
       toggleOnboardMode('login');
     }
   } catch(e) {}
+  initGoogleSignIn();
+}
+
+// ─── تسجيل الدخول بجوجل ─────────────────────────────────────
+function initGoogleSignIn() {
+  if (!window.google || !google.accounts || !google.accounts.id) {
+    // مكتبة جوجل لسه ما حمّلتش، نجرب تاني بعد شوية
+    setTimeout(initGoogleSignIn, 400);
+    return;
+  }
+  try {
+    google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleCredentialResponse
+    });
+    const btnEl = document.getElementById('google-signin-btn');
+    if (btnEl) {
+      google.accounts.id.renderButton(btnEl, {
+        theme: 'outline', size: 'large', text: 'continue_with', shape: 'pill', width: 300, locale: 'ar'
+      });
+    }
+  } catch(e) {
+    console.warn('تعذر تحميل تسجيل الدخول بجوجل:', e);
+  }
+}
+
+function decodeJwt(token) {
+  const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+  const json = decodeURIComponent(atob(base64).split('').map(c =>
+    '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+  return JSON.parse(json);
+}
+
+async function handleGoogleCredentialResponse(response) {
+  let payload;
+  try { payload = decodeJwt(response.credential); }
+  catch(e) { alert('⚠️ تعذر قراءة بيانات حساب جوجل. حاول تاني.'); return; }
+
+  const email = payload.email;
+  const googleName = payload.name || '';
+  if (!email) { alert('⚠️ تعذر الحصول على إيميل حساب جوجل.'); return; }
+
+  let data;
+  try {
+    data = await jsonpGet({ action:'googleAuth', email, t: Date.now() }, 20000);
+  } catch(e) {
+    alert('⚠️ تعذر الاتصال. تأكد من الإنترنت وحاول تاني.');
+    return;
+  }
+  if (!data.success) { alert('⚠️ ' + (data.error || 'حصلت مشكلة، حاول تاني.')); return; }
+
+  if (data.isNewAccount) {
+    // حساب جديد بجوجل — محتاجين رقم الهاتف مرة واحدة بس (للتنبيهات وربط قضاياك)
+    promptPhoneForGoogleAccount(email, googleName);
+    return;
+  }
+
+  // حساب موجود بالفعل — دخول فوري
+  store.profile = {
+    name: data.name || googleName, phone: data.phone,
+    specialty: data.specialty || '', websiteUrl: data.websiteUrl || '',
+    googleEmail: email, _v6: true, _registered: true
+  };
+  store.cases = [];
+  casesLoadedFromServer = false;
+  save();
+  const onboardEl = document.getElementById('onboard');
+  if (onboardEl) onboardEl.remove();
+  initApp();
+  fetchMyCasesInBackground();
+}
+
+function promptPhoneForGoogleAccount(email, googleName) {
+  mset(`<div class="mh"></div><h2>📱 خطوة أخيرة</h2>
+    <div style="font-size:13px;color:var(--tm);margin-bottom:16px;line-height:1.7">
+      أهلاً ${googleName ? googleName : ''}! محتاجين رقم هاتفك عشان تنبيهات الجلسات والتواصل مع عملائك.
+    </div>
+    <div class="fg"><label>رقم الهاتف *</label><input class="ob-inp" id="gp-phone" type="tel" placeholder="01xxxxxxxxx"/></div>
+    <div class="br">
+      <button class="bsave" style="width:100%" onclick="completeGoogleSignup('${email.replace(/'/g,"\\'")}','${(googleName||'').replace(/'/g,"\\'")}')">✅ إكمال التسجيل</button>
+    </div>`);
+}
+
+async function completeGoogleSignup(email, googleName) {
+  const phone = document.getElementById('gp-phone').value.trim();
+  if (!phone) { alert('من فضلك أدخل رقم الهاتف'); return; }
+
+  let data;
+  try {
+    data = await jsonpGet({ action:'completeGoogleRegistration', phone, email, name: googleName, t: Date.now() }, 20000);
+  } catch(e) {
+    alert('⚠️ تعذر الاتصال. تأكد من الإنترنت وحاول تاني.');
+    return;
+  }
+  if (!data.success) { alert('⚠️ ' + (data.error || 'حصلت مشكلة، حاول تاني.')); return; }
+
+  closeModal();
+  store.profile = {
+    name: data.name || googleName, phone,
+    specialty: data.specialty || '', websiteUrl: data.websiteUrl || '',
+    googleEmail: email, _v6: true, _registered: true
+  };
+  store.cases = [];
+  save();
+  const onboardEl = document.getElementById('onboard');
+  if (onboardEl) onboardEl.remove();
+  initApp();
 }
 
 function toggleOnboardMode(mode) {
