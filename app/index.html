@@ -560,6 +560,7 @@ function syncCasesToSheet() {
       adminTasks: (c.adminTasks || [])
     }));
     const casesJson = JSON.stringify(summary);
+    console.log('🔍 SYNC DIAG — phone:', store.profile.phone, '| cases count:', summary.length, '| ids:', summary.map(c=>c.id));
 
     if (casesJson.length < 6000) {
       // القناة الموثوقة (GET) — بتشتغل حتى لو POST كان بيفشل في بعض المتصفحات/الشبكات
@@ -1356,6 +1357,7 @@ async function fetchMyCasesInBackground(attempt) {
   if (!store.profile?.phone) return;
   try {
     const data = await jsonpGet({ action:'getMyData', phone: store.profile.phone, t: Date.now() }, 30000);
+    alert('🔍 تشخيص مؤقت — استرجاع القضايا:\nرقم الهاتف المستخدم: "' + store.profile.phone + '"\nعدد القضايا اللي رجعت من الشيت: ' + (data && Array.isArray(data.cases) ? data.cases.length : 'فشل/غير معروف') + '\nالرد كامل: ' + JSON.stringify(data).slice(0,300));
     if (data && data.success && Array.isArray(data.cases)) {
       const serverCases = data.cases.map(c => ({
         ...c,
