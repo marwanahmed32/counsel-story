@@ -1252,6 +1252,8 @@ async function handleGoogleCredentialResponse(response) {
 }
 
 function promptPhoneForGoogleAccount(email, googleName) {
+  const onboardEl = document.getElementById('onboard');
+  if (onboardEl) onboardEl.style.display = 'none';
   mset(`<div class="mh"></div><h2>📱 خطوة أخيرة</h2>
     <div style="font-size:13px;color:var(--tm);margin-bottom:16px;line-height:1.7">
       أهلاً ${googleName ? googleName : ''}! محتاجين رقم هاتفك عشان تنبيهات الجلسات والتواصل مع عملائك.
