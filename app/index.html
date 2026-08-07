@@ -15,6 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+<meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin-allow-popups">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <title>Counsel Story — سوّق لمكتبك وأدر قضاياك في مكان واحد</title>
 <style>
@@ -1188,7 +1189,8 @@ function initGoogleSignIn() {
   try {
     google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
-      callback: handleGoogleCredentialResponse
+      callback: handleGoogleCredentialResponse,
+      use_fedcm_for_prompt: false
     });
     const btnEl = document.getElementById('google-signin-btn');
     if (btnEl) {
@@ -1196,6 +1198,7 @@ function initGoogleSignIn() {
         theme: 'outline', size: 'large', text: 'continue_with', shape: 'pill', width: 300, locale: 'ar'
       });
     }
+    console.log('✅ Google Sign-In initialized');
   } catch(e) {
     console.warn('تعذر تحميل تسجيل الدخول بجوجل:', e);
   }
@@ -1209,6 +1212,7 @@ function decodeJwt(token) {
 }
 
 async function handleGoogleCredentialResponse(response) {
+  console.log('✅ Google callback fired', response);
   let payload;
   try { payload = decodeJwt(response.credential); }
   catch(e) { alert('⚠️ تعذر قراءة بيانات حساب جوجل. حاول تاني.'); return; }
