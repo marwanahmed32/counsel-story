@@ -533,11 +533,12 @@ async function pushProfileToSheet() {
 // يمنع مزامنة القضايا للشيت قبل ما نتأكد إننا جبنا القضايا الموجودة فعلاً أول
 // (مهم بعد تسجيل الدخول من جهاز جديد — لو حد ضاف قضية بسرعة قبل ما نجيب القديمة،
 // المزامنة كانت بتمسح القديمة من الشيت وتحط الجديدة بس بدالها)
-let casesLoadedFromServer = true;
+// ⚠️ الحالة دي محفوظة جوه store.casesSynced (مش متغيّر عادي) عشان متتفقدش لو الصفحة اتحمّلت تاني
+function casesSyncAllowed() { return store.casesSynced !== false; }
 
 let casesSyncTimer = null;
 function syncCasesToSheet() {
-  if (!casesLoadedFromServer) return; // لسه مستنيين نجيب القضايا الأصلية الأول
+  if (!casesSyncAllowed()) return; // لسه مستنيين نجيب القضايا الأصلية الأول
   clearTimeout(casesSyncTimer);
   casesSyncTimer = setTimeout(async () => {
     if (!store.profile?.phone) return;
@@ -1243,7 +1244,7 @@ async function handleGoogleCredentialResponse(response) {
     googleEmail: email, _v6: true, _registered: true
   };
   store.cases = [];
-  casesLoadedFromServer = false;
+  store.casesSynced = false;
   save();
   const onboardEl = document.getElementById('onboard');
   if (onboardEl) onboardEl.remove();
@@ -1284,10 +1285,12 @@ async function completeGoogleSignup(email, googleName) {
     googleEmail: email, _v6: true, _registered: true
   };
   store.cases = [];
+  store.casesSynced = false; // ممكن الرقم ده يكون عنده قضايا قديمة فعلاً — نتأكد الأول قبل أي مزامنة
   save();
   const onboardEl = document.getElementById('onboard');
   if (onboardEl) onboardEl.remove();
   initApp();
+  fetchMyCasesInBackground();
 }
 
 function toggleOnboardMode(mode) {
@@ -1339,7 +1342,7 @@ async function submitLogin() {
     _v6: true, _registered: true
   };
   store.cases = [];
-  casesLoadedFromServer = false; // نمنع أي مزامنة للشيت لحد ما نجيب القضايا الأصلية الأول
+  store.casesSynced = false; // نمنع أي مزامنة للشيت لحد ما نجيب القضايا الأصلية الأول
   save();
   document.getElementById('onboard').remove();
   initApp();
@@ -1348,7 +1351,8 @@ async function submitLogin() {
   fetchMyCasesInBackground();
 }
 
-async function fetchMyCasesInBackground() {
+async function fetchMyCasesInBackground(attempt) {
+  attempt = attempt || 1;
   if (!store.profile?.phone) return;
   try {
     const data = await jsonpGet({ action:'getMyData', phone: store.profile.phone, t: Date.now() }, 30000);
@@ -1365,7 +1369,7 @@ async function fetchMyCasesInBackground() {
       const serverIds = new Set(serverCases.map(c => c.id));
       const localOnly = (store.cases || []).filter(c => !serverIds.has(c.id));
       store.cases = [...serverCases, ...localOnly];
-      casesLoadedFromServer = true;
+      store.casesSynced = true; // محفوظة دائمة — متتفقدش لو الصفحة اتحمّلت تاني
       save();
       render(true);
       if (serverCases.length) {
@@ -1374,12 +1378,22 @@ async function fetchMyCasesInBackground() {
       // لو كانت فيه أي قضية اتضافت محليًا وإنتي مستنية الاسترجاع، هنزامنها فورًا دلوقتي
       syncCasesToSheet();
     } else {
-      console.warn('⚠️ تعذر استرجاع القضايا:', data);
-      casesLoadedFromServer = true; // نفك القفل برضو عشان مايفضلش التطبيق واقف من غير مزامنة للأبد
+      console.warn('⚠️ تعذر استرجاع القضايا (محاولة ' + attempt + '):', data);
+      retryFetchMyCases(attempt);
     }
   } catch(e) {
-    console.warn('⚠️ فشل استرجاع القضايا في الخلفية:', e);
-    casesLoadedFromServer = true;
+    console.warn('⚠️ فشل استرجاع القضايا في الخلفية (محاولة ' + attempt + '):', e);
+    retryFetchMyCases(attempt);
+  }
+}
+
+function retryFetchMyCases(attempt) {
+  if (attempt < 4) {
+    setTimeout(() => fetchMyCasesInBackground(attempt + 1), 4000);
+  } else {
+    // فشلنا كذا مرة — نسيب القفل شغال (أهم من إننا نخاطر بمسح بيانات حقيقية)
+    // ونوري تحذير واضح بدل ما نفتح الباب لمزامنة فاضية بالغلط
+    alert('⚠️ تعذر استرجاع قضاياك القديمة من الشيت. عشان بياناتك متتعملش overwrite بالغلط، تم إيقاف المزامنة مؤقتًا.\nمن فضلك اقفلي الموقع وافتحيه تاني بعد ما تتأكدي من اتصال الإنترنت.');
   }
 }
 
@@ -1394,6 +1408,7 @@ function submitOnboard() {
   if (pass !== pass2) { alert('كلمة السر وتأكيدها مش متطابقين'); return; }
   store.profile = { name, phone, password: pass, specialty: '', websiteUrl: '', _v6: true };
   store.cases = []; // تسجيل جديد = بداية نظيفة
+  store.casesSynced = true; // حساب جديد، مفيش قضايا نخاف نضيّعها
   save();
   document.getElementById('onboard').remove();
   initApp();
